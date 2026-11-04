@@ -1,0 +1,301 @@
+// TouchDesigner. When the server's bridge is on (a `td` event, see touch.py) the page sends what it hears and shows
+// over a WebSocket, ~30 times a second, and the server passes it on as OSC: numbers for an OSC In CHOP, events with
+// text for an OSC In DAT. Its pixel grid goes the same way (td.html shows it in a Web Render TOP), TouchDesigner
+// lays its effects over it (tdfx.py), and the result comes back: with TD FX on, the canvas shows TouchDesigner's
+// output instead of its own. Only the newest page is passed on; the server tells the others to stand by. What
+// TouchDesigner sends back arrives as `control` events and is applied here like a click on the panel.
+// ?view=canvas shows the picture alone, edge to edge.
+
+import { DEFS, recipeGeo } from './mixer.js';
+
+const KINDS = ['kick', 'snare', 'hat', 'perc', 'bass', 'keys', 'pad', 'loop', 'fx'];
+const RATE = 30;
+const HIT_TAU = 0.15; // s, how fast a hit's envelope decays
+const SECTION_TAU = 1;
+const r4 = (x) => (Number.isFinite(x) ? Math.round(x * 1e4) / 1e4 : 0);
+const flag = (x) => (typeof x === 'string' ? /^(1|on|true|yes)$/i.test(x) : !!x);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// a value that jumps up and decays from there, read at any moment
+class Env {
+  constructor(tau) { this.tau = tau; this.v = 0; this.t = 0; }
+  at(now) { return this.v * Math.exp(-(now - this.t) / this.tau); }
+  hit(x, now) { this.v = Math.max(this.at(now), x); this.t = now; }
+}
+
+// whether a scene shows geometric worlds only (mixer.js `geo`): a mix by its recipe, a classic style as its world
+const sceneGeo = (sc) => (sc.s?.recipe ? recipeGeo(sc.s.recipe) : !!DEFS[sc.name]?.geo);
+
+export class Touch {
+  // ctx: { $, st, mood, light, styles, trigger(i, velocity), onSection(kind), next() }
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.keys = Object.keys(ctx.styles);
+    this.ws = null;
+    this.on = false;
+    this.role = ''; // 'speak' while this page is the one passed on, 'standby' while a newer one is
+    this.addr = '';
+    this.hits = Object.fromEntries(['', ...KINDS].map((k) => [k, new Env(HIT_TAU)]));
+    this.sections = { change: new Env(SECTION_TAU), drop: new Env(SECTION_TAU) };
+    this.queue = [];
+    this.sent = {}; // the mood, scene and key last sent as events
+    this.last = 0;
+    this.el = ctx.$('#tdInfo');
+    this.btn = ctx.$('#tdBtn');
+    const canvasOnly = new URLSearchParams(location.search).get('view') === 'canvas';
+    if (canvasOnly) document.body.classList.add('canvas-only');
+    // TouchDesigner's output on the canvas: on by default, except in the canvas view, which TouchDesigner itself
+    // may be showing (its output in its input would loop)
+    this.view = !canvasOnly;
+    this.bmp = null;
+    this.bmpAt = 0;
+    this.tdError = '';
+    this.pulling = false;
+    this.btn?.classList.toggle('on', this.view);
+    this.btn?.addEventListener('click', () => {
+      this.view = !this.view;
+      this.btn.classList.toggle('on', this.view);
+      this.pull();
+      this.render();
+    });
+  }
+
+  onEvent(ev) {
+    if (ev.type === 'td') {
+      this.on = !!ev.on;
+      if (ev.values) this.addr = ev.values;
+      if (this.on) this.connect();
+      else this.ws?.close();
+      this.pull();
+      this.render();
+    } else if (ev.type === 'control') this.control(ev.cmd, ev.args || []);
+  }
+
+  connect() {
+    if (this.ws && this.ws.readyState <= WebSocket.OPEN) return;
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/td`);
+    this.ws = ws;
+    ws.onmessage = (e) => {
+      let m;
+      try { m = JSON.parse(e.data); } catch { return; }
+      if (!m.role) return;
+      this.role = m.role;
+      if (m.values) this.addr = m.values;
+      if (m.role === 'speak') this.sent = {}; // TouchDesigner gets the mood, scene and key afresh
+      this.render();
+    };
+    ws.onclose = () => {
+      if (this.ws !== ws) return;
+      this.ws = null;
+      this.role = '';
+      this.render();
+      if (this.on) setTimeout(() => this.on && this.connect(), 2000);
+    };
+  }
+
+  get speaking() {
+    return this.role === 'speak' && this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  render() {
+    if (this.btn) this.btn.hidden = !this.on;
+    if (!this.el) return;
+    this.el.hidden = !this.on;
+    const fx = !this.view ? '' : this.tdError ? ` · fx: ${this.tdError}`
+      : this.showing ? ` · showing its fx${this.via === 'stream' ? ' (stream)' : ''}` : '';
+    this.el.textContent = !this.on ? '' : this.role === 'speak' ? `touchdesigner · osc → ${this.addr}${fx}`
+      : this.role === 'standby' ? 'touchdesigner · standby, a newer page sends' : 'touchdesigner · connecting';
+  }
+
+  get showing() {
+    return this.view && this.bmp && performance.now() - this.bmpAt < 1000;
+  }
+
+  // the pixel grid as drawn this frame, alpha 0 where the paper is bare, so td.html can lay it on its own paper
+  sendFrame(N, data, vis) {
+    if (!this.speaking || this.ws.bufferedAmount > 1 << 18) return;
+    const buf = new ArrayBuffer(4 + N * N * 4);
+    new DataView(buf).setUint16(0, N, true);
+    const px = new Uint8Array(buf, 4);
+    px.set(data);
+    for (let i = 0; i < N * N; i++) if (!vis[i]) px[i * 4 + 3] = 0;
+    this.ws.send(buf);
+  }
+
+  show(bmp, via) {
+    const was = this.showing && !this.tdError && this.via === via;
+    this.bmp?.close?.();
+    this.bmp = bmp;
+    this.bmpAt = performance.now();
+    this.via = via;
+    if (via === 'stream') this.streamAt = this.bmpAt;
+    this.tdError = '';
+    if (!was) this.render();
+  }
+
+  // TouchDesigner's output as it pushes it, relayed by the server (/api/td/stream); a picture still being decoded
+  // makes the next ones wait their turn, only the newest is kept
+  stream() {
+    if (this.sws && this.sws.readyState <= WebSocket.OPEN) return;
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/td/stream`);
+    ws.binaryType = 'blob';
+    this.sws = ws;
+    let busy = false, next = null;
+    const decode = async (blob) => {
+      busy = true;
+      try { this.show(await createImageBitmap(blob), 'stream'); } catch { /* a broken picture: skip it */ }
+      busy = false;
+      if (next) { const b = next; next = null; decode(b); }
+    };
+    ws.onmessage = (e) => {
+      if (!(e.data instanceof Blob) || !this.view) return;
+      if (busy) next = e.data;
+      else decode(e.data);
+    };
+    ws.onclose = () => {
+      if (this.sws !== ws) return;
+      this.sws = null;
+      if (this.on && this.view) setTimeout(() => this.on && this.view && this.stream(), 2000);
+    };
+  }
+
+  // while TD FX is on: the stream, and fetching one frame after another (up to ~30 a second) only while the stream
+  // brings nothing (an older network in TouchDesigner, or none at all)
+  async pull() {
+    if (this.pulling) return;
+    this.pulling = true;
+    this.stream();
+    while (this.on && this.view) {
+      const t0 = performance.now();
+      if (t0 - (this.streamAt || 0) < 1000) {
+        await sleep(250);
+        continue;
+      }
+      try {
+        const res = await fetch('/api/td/frame', { cache: 'no-store' });
+        if (!res.ok) throw new Error('touchdesigner not answering');
+        this.show(await createImageBitmap(await res.blob()), 'poll');
+      } catch (e) {
+        if (!this.tdError) { this.tdError = e.message || 'touchdesigner not answering'; this.render(); }
+        await sleep(2000);
+        continue;
+      }
+      await sleep(Math.max(0, 1000 / RATE - (performance.now() - t0)));
+    }
+    this.sws?.close();
+    this.pulling = false;
+    this.render();
+  }
+
+  // over the canvas: TouchDesigner's take on it, while one fresh enough has come back
+  drawView(ctx, size) {
+    if (this.showing) ctx.drawImage(this.bmp, 0, 0, size, size);
+  }
+
+  hit(kind, strength) {
+    if (!this.speaking) return;
+    const now = performance.now() / 1000;
+    this.hits[''].hit(strength, now);
+    this.hits[kind]?.hit(strength, now);
+    this.queue.push(['/hit', kind, r4(strength)]);
+  }
+
+  // every step: beats and sections as they happen, everything else ~30 times a second
+  frame(f, now) {
+    if (!this.speaking) return;
+    if (f.section) {
+      this.sections[f.section]?.hit(1, now);
+      this.queue.push(['/section', f.section]);
+    }
+    if (f.beat.on) this.queue.push(['/beat', f.beat.count, f.bpm]);
+    if (now - this.last < 1 / RATE - 0.002) return;
+    this.last = now;
+    const { st, mood } = this.ctx, sc = st.cur, keyName = f.key ? f.key.name : 'none';
+    const changed = (k, v) => this.sent[k] !== v && ((this.sent[k] = v), true);
+    if (changed('mood', st.moodName || mood.name)) this.queue.push(['/mood', this.sent.mood]);
+    if (changed('scene', sc.name)) this.queue.push(['/scene', sc.name, sc.def.title]);
+    if (changed('key', keyName)) this.queue.push(['/key', keyName]);
+    const msg = JSON.stringify({ v: this.values(f, now), e: this.queue.splice(0) });
+    if (this.ws.bufferedAmount < 1 << 16) this.ws.send(msg); // a stalled socket drops frames rather than piling up
+  }
+
+  values(f, now) {
+    const { st, mood } = this.ctx, b = f.beat, rel = f.rel || {}, sc = st.cur;
+    const v = {
+      level: f.level, low: f.low, mid: f.mid, high: f.high,
+      bright: f.bright, flux: f.flux, busy: f.busy, tonal: f.tonalAvg, centroid: f.centroidHz,
+      bpm: f.bpm, 'beat/phase': b.phase, 'beat/pulse': b.pulse, 'beat/count': b.count, 'beat/conf': b.conf,
+      'bar/phase': ((b.count % 4) + b.phase) / 4,
+      'section/change': this.sections.change.at(now), 'section/drop': this.sections.drop.at(now),
+      'mood/valence': mood.v, 'mood/arousal': mood.a, 'mood/col': mood.col, 'mood/row': mood.row,
+      'key/root': f.key ? f.key.root : -1, 'key/major': f.key?.mode === 'maj' ? 1 : 0,
+      'scene/index': this.keys.indexOf(sc.name), 'scene/mix': st.prev ? st.mix : 1, 'scene/time': st.sceneTime,
+      'scene/geo': sceneGeo(sc) && (!st.prev || sceneGeo(st.prev)) ? 1 : 0,
+      ink: st.ink, idle: st.idle ? 1 : 0, hit: this.hits[''].at(now),
+    };
+    for (const n of ['bass', 'mid', 'treb']) {
+      v[`rel/${n}`] = rel[n];
+      v[`drive/${n}`] = rel[`${n}Drive`];
+      v[`clock/${n}`] = rel[`${n}Clock`];
+    }
+    for (const k of KINDS) v[`hit/${k}`] = this.hits[k].at(now);
+    f.band10.forEach((x, i) => { v[`band/${i}`] = x; });
+    const cmax = Math.max(...f.chroma) || 1; // relative: the strongest pitch class is 1
+    f.chroma.forEach((x, i) => { v[`chroma/${i}`] = x / cmax; });
+    sc.rgb.slice(0, 8).forEach((c, i) => {
+      v[`palette/${i}/r`] = c[0] / 255;
+      v[`palette/${i}/g`] = c[1] / 255;
+      v[`palette/${i}/b`] = c[2] / 255;
+    });
+    for (const k in v) v[k] = r4(v[k]);
+    return v;
+  }
+
+  control(cmd, args) {
+    const { $, st, light, styles } = this.ctx, a = args[0];
+    // a switch: /ep/hold 1 turns it on, /ep/hold 0 off, /ep/hold alone flips it
+    const toggle = (sel, isOn) => {
+      const want = a === undefined ? !isOn() : flag(a);
+      if (want !== isOn()) $(sel)?.click();
+    };
+    switch (cmd) {
+      case 'art': {
+        const k = String(a ?? 'auto').toLowerCase();
+        const key = k === 'auto' ? 'auto' : this.keys.find((x) => x.toLowerCase() === k) || this.keys.find((x) => styles[x].title.toLowerCase() === k);
+        if (!key) break;
+        const sel = $('#artSel');
+        sel.value = key;
+        sel.dispatchEvent(new Event('change'));
+        break;
+      }
+      case 'seed': $('#seedBtn').click(); break;
+      case 'clear': $('#clearBtn').click(); break;
+      case 'next': this.ctx.next(); break;
+      case 'drop': // TouchDesigner (and its Director) hear about it like a drop the page heard
+        this.ctx.onSection('drop');
+        this.sections.drop.hit(1, performance.now() / 1000);
+        if (this.speaking) this.queue.push(['/section', 'drop']);
+        break;
+      case 'hold': toggle('#holdBtn', () => st.hold); break;
+      case 'light': toggle('#lightBtn', () => light.on); break;
+      case 'grid': toggle('#gapBtn', () => st.gap); break;
+      case 'label': toggle('#labelBtn', () => st.label); break;
+      case 'res': $(`.res[data-n="${Math.round(Number(a))}"]`)?.click(); break;
+      case 'fade': {
+        if (!Number.isFinite(Number(a))) break;
+        const el = $('#fade');
+        el.value = String(Number(a)); // the range input keeps it within 2..30
+        el.dispatchEvent(new Event('input'));
+        break;
+      }
+      case 'group': $(`.grp[data-g="${String(a).toUpperCase()}"]`)?.click(); break;
+      case 'pad': {
+        if (args[2] !== undefined) $(`.grp[data-g="${String(args[2]).toUpperCase()}"]`)?.click();
+        const i = Math.round(Number(a)) - 1, vel = args[1] === undefined ? 1 : Math.min(1, Math.max(0, Number(args[1]) || 0));
+        if (i >= 0 && i < 12) this.ctx.trigger(i, vel);
+        break;
+      }
+      default: break;
+    }
+  }
+}

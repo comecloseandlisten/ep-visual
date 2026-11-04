@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ep visual</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+    <div class="stage-wrap">
+      <canvas id="stage" width="1000" height="1000"></canvas>
+      <div class="stage-foot"><span>1000 × 1000</span><span>drop audio anywhere</span><span>ctrl+s · save png</span></div>
+    </div>
+
+    <aside class="panel">
+      <header class="brand">
+        <div class="logo">ep<i>·</i>visual</div>
+        <div class="tag">mood → pixels</div>
+      </header>
+      <div class="status"><span class="dot"></span><span id="status">starting</span></div>
+
+      <section>
+        <h2><b>01</b>mood</h2>
+        <div class="mood">
+          <div id="moodName">silence</div>
+          <dl>
+            <div><dt>art</dt><dd id="moodScene">—</dd></div>
+            <div><dt>key</dt><dd id="moodKey">—</dd></div>
+            <div><dt>bpm</dt><dd id="moodBpm">—</dd></div>
+          </dl>
+        </div>
+        <div id="story" class="story"></div>
+        <div id="track" class="track" hidden><div id="trackName" class="track-name">nothing playing</div><div id="trackMeta" class="track-meta"></div></div>
+        <div class="mapbox">
+          <div class="axis-y">arousal ↑</div>
+          <canvas id="map" width="150" height="150"></canvas>
+          <div class="mapside">
+            <div class="axis-x">valence →</div>
+            <div id="mapVal" class="mono">v 0.50  a 0.40</div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2><b>02</b>signal</h2>
+        <div id="groove" class="story mono"></div>
+        <canvas id="meters" width="300" height="284"></canvas>
+      </section>
+
+      <section>
+        <h2><b>03</b>pads
+          <span class="groups">
+            <button class="grp on" data-g="A">a</button><button class="grp" data-g="B">b</button><button class="grp" data-g="C">c</button><button class="grp" data-g="D">d</button>
+          </span>
+        </h2>
+        <div class="row"><span class="lab">kit</span><select id="kitSel" aria-label="kit"></select></div>
+        <div class="pads" id="pads"></div>
+        <p class="hint">keys 1 2 3 · q w e · a s d · z x c or numpad. space stops. drop a file on a pad to swap it.</p>
+      </section>
+
+      <section>
+        <h2><b>04</b>input</h2>
+        <div class="row">
+          <button id="lineBtn" class="key wide">line in</button><button id="sysBtn" class="key" title="listen to what the computer plays: a stereo mix / loopback input, or share the system audio">spotify</button>
+          <select id="inputSel" aria-label="input device"></select>
+        </div>
+        <div class="row" id="pairRow" hidden><span class="lab">ch</span><select id="pairSel" aria-label="input channels"><option value="auto">auto · loudest</option></select></div>
+        <label class="slider"><span>gain</span><input id="gain" type="range" min="0" max="4" step="0.1" value="1"><output id="gainVal">1.0×</output></label>
+        <label class="check"><input id="monitor" type="checkbox"><span>monitor input</span></label>
+        <p class="hint" id="jamInfo"></p>
+      </section>
+
+      <section>
+        <h2><b>05</b>canvas</h2>
+        <div class="row"><span class="lab">art</span><select id="artSel" aria-label="art"></select></div>
+        <div class="row">
+          <span class="lab">res</span>
+          <button class="key res" data-n="50">50</button><button class="key res" data-n="100">100</button><button class="key res on" data-n="125">125</button><button class="key res" data-n="200">200</button>
+        </div>
+        <label class="slider"><span>fade</span><input id="fade" type="range" min="2" max="30" step="1" value="8"><output id="fadeVal">8s</output></label>
+        <div class="row">
+          <button id="gapBtn" class="key on">grid</button><button id="labelBtn" class="key">label</button><button id="holdBtn" class="key">hold</button><button id="lightBtn" class="key on">light fx</button><button id="tdBtn" class="key" hidden title="show what TouchDesigner lays over the picture">td fx</button>
+        </div>
+        <div class="row lightbar"><span class="lab">light</span><button id="lightAuto" class="key on">auto</button><span class="fxs" id="lightFx"></span></div>
+        <div class="row">
+          <button id="seedBtn" class="key">new seed</button><button id="clearBtn" class="key">clear</button><button id="saveBtn" class="key accent">save png</button><button id="recBtn" class="key" title="record the canvas with its sound into the library's visuals folder">rec</button>
+        </div>
+        <p class="hint" id="tdInfo" hidden></p>
+      </section>
+    </aside>
+  </main>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
