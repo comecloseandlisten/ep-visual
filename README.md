@@ -6,6 +6,10 @@
   <code>mood → pixels</code> &nbsp;·&nbsp; <code>1000 × 1000</code> &nbsp;·&nbsp; <code>no build</code> &nbsp;·&nbsp; <code>no deps</code> &nbsp;·&nbsp; <code>mit</code>
 </p>
 
+<p align="center">
+  <a href="https://comecloseandlisten.github.io/ep-visual/"><b>● open the live page</b></a>
+</p>
+
 a page that listens to music, reads its mood and paints it as generative pixel art on a white
 1000×1000 canvas. plain es modules, nothing to install.
 
@@ -14,7 +18,9 @@ a 3×4 pad grid in four groups, keys like the ep's keypad. not affiliated with t
 
 ## `01` run
 
-the page uses es modules, so serve the folder over http instead of opening the file:
+live: <https://comecloseandlisten.github.io/ep-visual/>. drop an audio file on a pad or press **line in**.
+
+locally the page uses es modules, so serve the folder over http instead of opening the file:
 
 ```bash
 python -m http.server 8000
