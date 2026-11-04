@@ -522,8 +522,9 @@ function applyRecipe(s, recipe) {
   lastRecipe = recipe;
 }
 
-// what a world gets to draw with: its raster, its own state `w`, the scene's shared state `s`, and the frame
-export const ctx = (s, c, r, w = s.w) => ({ s, w, r, N: c.N, u: c.N / 125, px: c.px, seed: c.seed, mood: s.mood, t: c.t, dt: c.dt, f: c.f, hits: c.hits, rnd: c.rnd, v: s.v, a: s.a, targets: s.targets });
+// what a world gets to draw with: its raster, its own state `w`, the scene's shared state `s`, and the frame; its
+// unit `u` grows and shrinks with the `size` knob (knobs.js)
+export const ctx = (s, c, r, w = s.w) => ({ s, w, r, N: c.N, u: (c.N / 125) * (c.size || 1), px: c.px, seed: c.seed, mood: s.mood, t: c.t, dt: c.dt, f: c.f, hits: c.hits, rnd: c.rnd, v: s.v, a: s.a, targets: s.targets });
 
 // the second world of a split, an inset or a zap, (re)started whenever the recipe names a new one
 function second(s, c) {
@@ -665,6 +666,7 @@ export function makeMixStyle(title, families = null) {
       }
       if (s.shake > 0.05) shiftRows(r, Math.round((rnd() - 0.5) * s.shake * 3 * W.u));
       s.shake *= Math.exp(-dt * 8);
+      c.look?.(r, true); // the knobs' camera and trails go on the worlds, under the screen treatment
       FX[s.recipe.fx]?.(W);
     },
   };

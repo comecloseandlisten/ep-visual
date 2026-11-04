@@ -9,6 +9,7 @@ import { meaning, meaningKey } from './meaning.js';
 import { renewNext } from './mixer.js';
 import { LOOPBACK, NowPlaying } from './nowplaying.js';
 import { Touch } from './touch.js';
+import { Knobs } from './knobs.js';
 import { Recorder } from './record.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -698,7 +699,7 @@ function connectJam() {
       if (ev.state !== 'playing' && ev.state !== 'listening') listener.clock(0, 0, now);
     } else if (ev.type === 'track') { // what the computer (Spotify) plays, and what is known about it
       nowPlaying.onEvent(ev);
-    } else if (ev.type === 'td' || ev.type === 'control') { // the TouchDesigner bridge, and what it sends back
+    } else if (ev.type === 'td' || ev.type === 'control' || ev.type === 'knobs') { // the TouchDesigner bridge, what it sends back, the world's knobs
       touch.onEvent(ev);
     } else if (ev.type === 'record') { // record_visual: a clip of the canvas with its sound
       recorder.onEvent(ev);
@@ -811,8 +812,12 @@ setInterval(() => {
   if (performance.now() - lastRaf > 120) step(performance.now());
 }, 16);
 
+// a scene draws in the frame the world's knobs make (knobs.js): its own clock, what it hears, its unit, and the camera
+// and trails on its raster; then its colours as the knobs paint them
 function runScene(sc, dt, f, hits) {
-  sc.def.draw(sc.s, { N: st.N, px: st.px, t: st.sceneT, dt, f, hits, rnd: sc.rnd, seed: st.seed }, sc.raster);
+  const k = knobs.frame(sc, st.sceneT, dt, f, hits);
+  sc.def.draw(sc.s, { N: st.N, px: st.px, ...k, rnd: sc.rnd, seed: st.seed }, sc.raster);
+  if (!sc.looked) knobs.look(sc.raster, sc, false);
   if (sc.s.paletteDirty) { // a style that recoloured itself mid-way (a mix swapping its palette): fade over to it
     sc.rgbFrom = sc.rgb;
     sc.rgbTo = sc.s.palette.map(hexRgb);
@@ -825,6 +830,7 @@ function runScene(sc, dt, f, hits) {
     sc.rgb = sc.rgbTo.map((c, i) => (sc.rgbFrom[i] ? c.map((v, j) => sc.rgbFrom[i][j] + (v - sc.rgbFrom[i][j]) * k) : c));
     if (k >= 1) sc.rgbTo = null;
   }
+  sc.view = knobs.paint(sc.rgb);
 }
 
 // What the picture gets of the hits: all of them when the music has room, fewer as it empties out, so a breakdown
@@ -837,6 +843,7 @@ function thin(hits, g) {
 function draw(dt, f) {
   const N = st.N, hits = st.hits.splice(0);
   st.sceneT += dt;
+  knobs.update(dt);
   soak(dt);
   if (!st.idle) {
     // the section, the groove's event and the line of a square, held since the last scene frame
@@ -880,7 +887,7 @@ function draw(dt, f) {
       let c = PAPER, dim = 1;
       if (v) {
         const sc = v === 2 ? prev : cur;
-        c = sc.rgb[sc.raster.buf[cam ? cam.src[i] : i]];
+        c = (sc.view || sc.rgb)[sc.raster.buf[cam ? cam.src[i] : i]];
         // a darker wet rim where the paint meets the paper (Curtis et al.'s edge darkening), and on the front
         // of a new style flooding in; a camera move shades its receding door and frames its picture
         if ((x > 0 && !vis[i - 1]) || (x < N - 1 && !vis[i + 1]) || (y > 0 && !vis[i - N]) || (y < N - 1 && !vis[i + N])) dim = 0.8;
@@ -893,9 +900,11 @@ function draw(dt, f) {
       data[p + 3] = 255;
     }
   st.ink = shown / (N * N);
-  if (light.on && !st.idle && st.ink > 0.25) light.apply(img.data, N, N / 125);
+  // to TouchDesigner as painted, without the light show: it lays its own effects over it (its strobe, its bloom),
+  // and while its result is on the canvas the page's light would only be drawn over, so it rests
+  touch.sendFrame(N, img.data, vis);
+  if (light.on && !st.idle && !touch.showing) light.apply(img.data, N, N / 125, st.ink);
   smallCtx.putImageData(img, 0, 0);
-  touch.sendFrame(N, img.data, vis); // to TouchDesigner, which lays its effects over it
   bigCtx.imageSmoothingEnabled = false;
   bigCtx.drawImage(small, 0, 0, SIZE, SIZE);
   if (st.gap && N <= 125) {
@@ -1166,8 +1175,10 @@ function nextPicture() {
   st.sceneTime = 0;
 }
 // TouchDesigner (touch.py): what the page hears and shows goes out as OSC, and its control messages come back here
+// the world's own knobs, set by the server's Director, the MCP tool td_world and TouchDesigner (knobs.py)
+const knobs = new Knobs();
 const touch = new Touch({
-  $, st, mood, light, styles: STYLES, trigger, next: nextPicture,
+  $, st, mood, light, knobs, styles: STYLES, trigger, next: nextPicture,
   onSection: (kind) => { if (st.idle) { reseed(); st.idle = false; } onSection(kind, st.moodName || mood.name); },
 });
 // clips of the canvas as shown, with what the page hears
@@ -1183,4 +1194,4 @@ connectJam();
 requestAnimationFrame(loop);
 
 // handy for poking at it from the console
-window.epVisual = { st, mood, listener, light, groove, groups, trigger, emitHit, crossTo, onSection, actx, master, jam, nowPlaying, touch, recorder, line: () => lineIn };
+window.epVisual = { st, mood, listener, light, groove, groups, trigger, emitHit, crossTo, onSection, actx, master, jam, nowPlaying, touch, knobs, recorder, line: () => lineIn };

@@ -30,6 +30,9 @@ import { BANGKOK_STYLE } from './bangkok.js';
 import { SURREAL_STYLE } from './surreal.js';
 import { OFFROAD_STYLE } from './offroad.js';
 import { DOOMER_STYLE } from './doomer.js';
+import { CHAOS_STYLE } from './chaos.js';
+import { NORTH_STYLE } from './north.js';
+import { OPENINGS_STYLE } from './openings.js';
 import { DEFS, L, M, H, PALETTES, fit, fullPalette, makeMixStyle, registerFamily, worldsOf } from './mixer.js';
 import { MOOD_VA } from './story.js';
 import { meaning, worldMeaning } from './meaning.js';
@@ -121,7 +124,7 @@ export const MIX_STYLE = makeMixStyle('MIX', null);
 
 // the families of the mixer (mixer.js), each a style of its own: retro references, the demoscene, pop art and the
 // modernists, ...; `mix` draws from all of them at once
-const FAMILY_STYLES = { retro: RETRO_STYLE, demo: DEMO_STYLE, pop: POP_STYLE, anime: ANIME_STYLE, indie: INDIE_STYLE, under: UNDER_STYLE, street: STREET_STYLE, space: SPACE_STYLE, epic: EPIC_STYLE, grim: GRIM_STYLE, cinema: CINEMA_STYLE, y2k: Y2K_STYLE, shooter: SHOOTER_STYLE, medieval: MEDIEVAL_STYLE, ps1: PS1_STYLE, casino: CASINO_STYLE, fairy: FAIRY_STYLE, stealth: STEALTH_STYLE, coffee: COFFEE_STYLE, classics: CLASSICS_STYLE, crime: CRIME_STYLE, bangkok: BANGKOK_STYLE, surreal: SURREAL_STYLE, offroad: OFFROAD_STYLE, doomer: DOOMER_STYLE };
+const FAMILY_STYLES = { retro: RETRO_STYLE, demo: DEMO_STYLE, pop: POP_STYLE, anime: ANIME_STYLE, indie: INDIE_STYLE, under: UNDER_STYLE, street: STREET_STYLE, space: SPACE_STYLE, epic: EPIC_STYLE, grim: GRIM_STYLE, cinema: CINEMA_STYLE, y2k: Y2K_STYLE, shooter: SHOOTER_STYLE, medieval: MEDIEVAL_STYLE, ps1: PS1_STYLE, casino: CASINO_STYLE, fairy: FAIRY_STYLE, stealth: STEALTH_STYLE, coffee: COFFEE_STYLE, classics: CLASSICS_STYLE, crime: CRIME_STYLE, bangkok: BANGKOK_STYLE, surreal: SURREAL_STYLE, offroad: OFFROAD_STYLE, doomer: DOOMER_STYLE, chaos: CHAOS_STYLE, north: NORTH_STYLE, openings: OPENINGS_STYLE };
 
 export const STYLES = {
   ...Object.fromEntries(Object.entries(CLASSIC).map(([k, d]) => [k, withVariants(d)])),

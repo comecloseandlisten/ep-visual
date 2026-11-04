@@ -75,7 +75,9 @@ the moment on a valence × arousal map. the mood picks the art.
 
 worlds come in families (`js/*.js`, registered in `js/styles.js` through `js/mixer.js`): classic art
 movements, flat poster stories (`te.js` + `story.js`), retro screens, 32-bit console 3d, anime, cinema, pop
-art, fairy tales, crime pictures, shooters, medieval, bangkok, surreal, off-road and more. every family
+art, fairy tales, crime pictures, shooters, medieval, bangkok, surreal, off-road, strange attractors and
+fractals done with the real equations (`chaos`), norse and slavic tales (`north`), cult title sequences
+(`openings`) and more. every family
 draws tropes as original silhouettes and sets: no real people, characters, logos or readable text from
 actual works.
 

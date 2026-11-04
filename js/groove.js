@@ -91,7 +91,7 @@ export class Groove {
       fast: { loud: -70, low: -70, pLoud: 0, pLow: 0, loudMid: -120, lowMid: -120, loudSlow: -90, lowSlow: -90 },
       state: 'groove', before: 'groove', stateT: 0, since: 0, event: null, armed: false, dropBeat: -1e9, dropLen: 16,
       lowRun: 0, quietRun: 0, fullRun: 0, holeT: 0, backT: 0, lastOnset: -1, expect: 0, bars: 0, liftBase: 0,
-      energy: 0.6, tension: 0, budget: 0.5, dip: 0, lock: 0, swingAcc: 0, step: -1, stepW: 0, pulse: 0, fill: false,
+      energy: 0.6, tension: 0, budget: 0.5, lock: 0, swingAcc: 0, step: -1, stepW: 0, pulse: 0, fill: false,
     });
   }
 
@@ -141,7 +141,7 @@ export class Groove {
     }
     this.frame(f, now, dt, T);
     return {
-      state: this.state, event: this.event, energy: this.energy, budget: this.budget, tension: this.tension, dip: this.dip,
+      state: this.state, event: this.event, energy: this.energy, budget: this.budget, tension: this.tension,
       lock: this.lock, sync: this.sync(), swing: clamp(this.swingAcc / 0.33, -1, 1), step: this.step, stepW: this.stepW,
       pulse: this.pulse, fill: this.fill, armed: this.armed, tmpl: this.tmpl, ready: !!this.ref,
       square: sq, shift: this.shift,
@@ -354,7 +354,6 @@ export class Groove {
     // missed one
     if (f.section === 'drop' && this.state !== 'drop' && this.beatN - this.dropBeat > 16) this.drop(now, 'drop');
 
-    this.dip = follow(this.dip, this.state === 'pit' ? 1 : 0, dt, this.state === 'pit' ? 0.03 : 0.08);
     this.pulse *= Math.exp(-dt / 0.12);
     // the budget: what each part leaves room for. Up quickly (at once on a drop), down slowly, but at once into a pit
     const e = this.energy, groove = 0.25 + 0.45 * e + 0.1 * this.lock;

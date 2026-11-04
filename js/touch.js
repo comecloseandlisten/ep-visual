@@ -3,10 +3,13 @@
 // text for an OSC In DAT. Its pixel grid goes the same way (td.html shows it in a Web Render TOP), TouchDesigner
 // lays its effects over it (tdfx.py), and the result comes back: with TD FX on, the canvas shows TouchDesigner's
 // output instead of its own. Only the newest page is passed on; the server tells the others to stand by. What
-// TouchDesigner sends back arrives as `control` events and is applied here like a click on the panel.
+// TouchDesigner sends back arrives as `control` events and is applied here like a click on the panel. The world's
+// own knobs (knobs.js) arrive as `knobs` events, from the server's Director, td_world or TouchDesigner, and count
+// only while the bridge is on.
 // ?view=canvas shows the picture alone, edge to edge.
 
 import { DEFS, recipeGeo } from './mixer.js';
+import { KNOBS } from './knobs.js';
 
 const KINDS = ['kick', 'snare', 'hat', 'perc', 'bass', 'keys', 'pad', 'loop', 'fx'];
 const RATE = 30;
@@ -27,7 +30,7 @@ class Env {
 const sceneGeo = (sc) => (sc.s?.recipe ? recipeGeo(sc.s.recipe) : !!DEFS[sc.name]?.geo);
 
 export class Touch {
-  // ctx: { $, st, mood, light, styles, trigger(i, velocity), onSection(kind), next() }
+  // ctx: { $, st, mood, light, knobs, styles, trigger(i, velocity), onSection(kind), next() }
   constructor(ctx) {
     this.ctx = ctx;
     this.keys = Object.keys(ctx.styles);
@@ -66,9 +69,22 @@ export class Touch {
       if (ev.values) this.addr = ev.values;
       if (this.on) this.connect();
       else this.ws?.close();
+      this.knobs();
       this.pull();
       this.render();
     } else if (ev.type === 'control') this.control(ev.cmd, ev.args || []);
+    else if (ev.type === 'knobs') { // kept, in case it comes before the bridge's own event (a page opened later)
+      this.knobVals = ev.values || {};
+      this.knobs();
+      this.render();
+    }
+  }
+
+  knobs() {
+    const kn = this.ctx.knobs;
+    if (!kn) return;
+    if (this.on) kn.set(this.knobVals || {});
+    else kn.reset();
   }
 
   connect() {
@@ -103,7 +119,10 @@ export class Touch {
     this.el.hidden = !this.on;
     const fx = !this.view ? '' : this.tdError ? ` · fx: ${this.tdError}`
       : this.showing ? ` · showing its fx${this.via === 'stream' ? ' (stream)' : ''}` : '';
-    this.el.textContent = !this.on ? '' : this.role === 'speak' ? `touchdesigner · osc → ${this.addr}${fx}`
+    // the knobs off neutral, as last set
+    const kn = this.ctx.knobs, set = kn ? Object.entries(kn.want).filter(([k, x]) => Math.abs(x - KNOBS[k][0]) > 1e-3) : [];
+    const world = set.length ? ` · world: ${set.map(([k, x]) => `${k} ${+x.toFixed(2)}`).join(' ')}` : '';
+    this.el.textContent = !this.on ? '' : this.role === 'speak' ? `touchdesigner · osc → ${this.addr}${fx}${world}`
       : this.role === 'standby' ? 'touchdesigner · standby, a newer page sends' : 'touchdesigner · connecting';
   }
 
@@ -242,7 +261,7 @@ export class Touch {
     f.band10.forEach((x, i) => { v[`band/${i}`] = x; });
     const cmax = Math.max(...f.chroma) || 1; // relative: the strongest pitch class is 1
     f.chroma.forEach((x, i) => { v[`chroma/${i}`] = x / cmax; });
-    sc.rgb.slice(0, 8).forEach((c, i) => {
+    (sc.view || sc.rgb).slice(0, 8).forEach((c, i) => {
       v[`palette/${i}/r`] = c[0] / 255;
       v[`palette/${i}/g`] = c[1] / 255;
       v[`palette/${i}/b`] = c[2] / 255;
