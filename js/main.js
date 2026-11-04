@@ -15,7 +15,6 @@ import { Recorder } from './record.js';
 const $ = (sel) => document.querySelector(sel);
 const SIZE = 1000;
 const FPS = 30;
-const KEEP = 0.4; // share of the canvas a pit or a breakdown leaves standing while the music plays
 const SILENCE = 3; // seconds of next to nothing before the quiet may dry the picture away
 const PAD_LABELS = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', 'ent'];
 const KEYMAP = {
@@ -735,13 +734,14 @@ function step(ms) {
     const k = classifyOnset(f.onset, f);
     if (now - st.lastPadHit > 0.1) emitHit(k.kind, k.pc, f.onset.strength);
   }
-  // a breakdown dries the picture back toward its wettest spots, as the quiet does: the paper shows through. While
-  // the music plays that only strips it down (a pit or a breakdown keeps `KEEP` of the canvas); a real silence, a
-  // few seconds of next to nothing (the track stopped), dries it away
-  const quiet = Math.max(clamp(1 - f.level * 2.5), g.state === 'break' ? 0.75 * clamp((0.45 - g.budget) / 0.3) : 0);
+  // while the music plays the whole canvas is painted: the wash floods it in under a second and nothing dries, not
+  // even in a breakdown. Only a real silence, a few seconds of next to nothing (the track stopped), dries it away
+  // toward its wettest spots
+  const quiet = clamp(1 - f.level * 2.5);
   st.silentT = f.level < 0.1 ? st.silentT + dt : 0;
-  st.wash = Math.min(1, st.wash + f.level * dt * 0.035);
-  if (!st.hold && (st.silentT > SILENCE || st.ink > KEEP)) st.dryK = Math.max(0, st.dryK - (dt / st.fade) * quiet);
+  const playing = !st.idle && st.silentT <= SILENCE;
+  st.wash = Math.min(1, st.wash + (playing ? 1.4 : f.level * 0.035) * dt);
+  if (!st.hold && !playing) st.dryK = Math.max(0, st.dryK - (dt / st.fade) * quiet);
   if (f.level > 0.1) st.commit = true;
   if (f.level > 0.25 && st.idle) { reseed(); st.idle = false; }
 
