@@ -11,6 +11,7 @@ import { LOOPBACK, NowPlaying } from './nowplaying.js';
 import { Touch } from './touch.js';
 import { Knobs } from './knobs.js';
 import { Recorder } from './record.js';
+import { Sync } from './sync.js';
 
 const $ = (sel) => document.querySelector(sel);
 const SIZE = 1000;
@@ -42,6 +43,7 @@ const listener = new Listener(actx, bus);
 const mood = new Mood();
 const light = new LightShow(); // flashes, beams and leaks over whatever is on the canvas
 const groove = new Groove(); // how much the picture can take right now, and where the squares begin
+const sync = new Sync(); // the beat and the squares where the room hears them, held for the scene frames
 let lineIn = null;
 const resume = () => actx.state !== 'running' && actx.resume();
 
@@ -56,8 +58,10 @@ const st = {
   wet: null, edge: null, drops: [], wash: 0, dryK: 1, commit: false, ink: 0, idle: true, silentT: 0,
   cur: null, prev: null, mix: 1, mixMap: null, vis: null, moodName: null, sceneT: 0, variant: {}, variantFor: {}, f: null,
   want: null, wantSince: 0, force: false, sectionsHere: 0, section: null, crossed: false,
-  // the groove's event and the line of a square, held for the next scene frame like the section
-  gevent: null, line: false,
+  // the groove's event, held for the next scene frame like the section (the beat and the square's line: sync.js)
+  gevent: null,
+  // the sync slider's trim on how far the picture is read ahead of what the page hears, in seconds
+  sync: loadSync(),
   // how the next picture comes in (`trans`) and the camera maps for it (`cam`); how long this one has been up;
   // each mood's styles in this session's order
   trans: null, cam: null, forceTrans: null, order: {}, sceneBeats: 0, sceneTime: 0,
@@ -72,6 +76,20 @@ const small = document.createElement('canvas');
 const smallCtx = small.getContext('2d');
 let img = null;
 let gapLayer = null;
+
+function loadSync() {
+  try { return clamp(Number(localStorage.getItem('ep-visual.sync')) || 0, -0.15, 0.25); } catch { return 0; }
+}
+
+// How far the picture runs behind the room (sync.js): the server's loopback plays what it captured with a lead, an
+// input has about three hundredths of latency, and the page's own pads reach the speakers after the listener hears
+// them; a jam's clock is the device's own. Then a frame or two to the screen, and the slider's trim.
+const SCREEN = 0.04;
+function ahead(f) {
+  const loop = lineIn?.label.startsWith('system audio ·') && nowPlaying.feed;
+  const heard = f.clock ? 0 : loop ? nowPlaying.feed.lag : lineIn ? 0.03 : -(actx.outputLatency || 0);
+  return clamp(heard + SCREEN + st.sync, 0, 0.5);
+}
 
 function hashStr(s) {
   let h = 2166136261;
@@ -357,7 +375,9 @@ function emitHit(kind, pc, strength, own = false) {
   if (st.idle) { reseed(); st.idle = false; }
   const x = pc >= 0 ? (pc + 0.2 + Math.random() * 0.6) / 12 : 0.08 + Math.random() * 0.84;
   const y = clamp((KIND_Y[kind] ?? 0.5) + (Math.random() - 0.5) * 0.16, 0.05, 0.95);
-  const h = { kind, pc, strength, x, y, own };
+  // `at`: the beat it was heard on (count + phase as the page heard it), for whoever weighs it against the bar
+  const b = listener.f?.beat, at = b && listener.bpm ? b.count + b.phase : null;
+  const h = { kind, pc, strength, x, y, own, at };
   touch.hit(kind, strength);
   st.hits.push(h);
   if (st.hits.length > 64) st.hits.shift();
@@ -727,8 +747,10 @@ function step(ms) {
   listener.lockTo(g.grid?.bpm, g.grid?.beats);
   f.section = g.event === 'drop' ? 'drop' : f.section === 'change' ? 'change' : null;
   if (g.event && st.gevent !== 'drop') st.gevent = g.event;
-  if (g.square?.line) st.line = true;
   const name = mood.update(f, dt, now);
+  // the frame as the room hears it: what the picture, the light, the cuts and TouchDesigner go by
+  st.ahead = ahead(f);
+  const v = sync.view(f, now, dt, st.ahead);
 
   if (f.onset) {
     const k = classifyOnset(f.onset, f);
@@ -746,17 +768,17 @@ function step(ms) {
   if (f.level > 0.25 && st.idle) { reseed(); st.idle = false; }
 
   st.moodName = name;
-  st.f = f;
+  st.f = v;
   // development: a picture never outstays its welcome. After `hold` bars (fewer when the music is up) the mood's
   // next style comes in even if the music never announced a new section; a style that remixes itself (the mixes,
   // the stories) gets longer, since it moves on by itself; a fixed classic style is recomposed instead. It comes
   // on the line of a square, and never in a build or a pit: the drop that follows brings a new picture anyway
-  const sq = g.square, waiting = g.state === 'build' || g.state === 'pit';
-  if (f.beat.on) st.sceneBeats++;
+  const sq = v.groove.square, vb = v.beat, waiting = g.state === 'build' || g.state === 'pit';
+  if (vb.on) st.sceneBeats++;
   st.sceneTime += dt;
   if (!st.idle && !st.prev && st.ink > 0.2 && !waiting) {
     const self = STYLES[st.cur.name].byMood, hold = (mood.a > 0.6 ? 8 : mood.a > 0.42 ? 12 : 16) * (self ? 1.5 : 1);
-    if (sq ? sq.line && st.sceneBeats >= hold * 4 - 4 : f.bpm > 0 && f.beat.conf > 0.15 ? st.sceneBeats >= hold * 4 : st.sceneTime > hold * 1.9) {
+    if (sq ? sq.line && st.sceneBeats >= hold * 4 - 4 : f.bpm > 0 && vb.conf > 0.15 ? st.sceneBeats >= hold * 4 : st.sceneTime > hold * 1.9) {
       if (st.art === 'auto' && orderFor(name).length > 1) { nextVariant(name); st.force = true; }
       else if (!self) { st.seed = (Math.random() * 2 ** 32) >>> 0; crossTo(st.cur.name); }
       st.sceneBeats = 0;
@@ -771,8 +793,8 @@ function step(ms) {
     // tempo it waits for the line of a square (for the bar line if one has not come in a square's time)
     const storyOnly = want === st.cur.name, fixed = st.art !== 'auto' && storyOnly;
     const settled = st.force || (st.art !== 'auto' && !fixed) || st.ink < 0.02 || now - st.wantSince > (storyOnly ? 6 : 2);
-    const late = sq && now - st.wantSince > 2 + 16 * f.beat.T;
-    const onBar = sq ? sq.line || (late && f.beat.on && f.beat.count % 4 === 0) : !(f.bpm && f.beat.conf > 0.15) || (f.beat.on && f.beat.count % 4 === 0);
+    const late = sq && now - st.wantSince > 2 + 16 * vb.T;
+    const onBar = sq ? sq.line || (late && vb.on && vb.count % 4 === 0) : !(f.bpm && vb.conf > 0.15) || (vb.on && vb.count % 4 === 0);
     if (settled && (onBar || (st.art !== 'auto' && !fixed) || st.ink < 0.02)) {
       crossTo(want);
       st.force = false;
@@ -788,16 +810,16 @@ function step(ms) {
   // for that event already and should not see it again
   if (f.section && !st.crossed) st.section = f.section;
   st.crossed = false;
-  touch.frame(f, now);
+  touch.frame(v, now);
 
   if (now - lastDraw >= 1 / FPS - 0.002) {
     const step = Math.min(0.1, now - lastDraw);
     lastDraw = now;
-    if (!st.hold) draw(step, f);
+    if (!st.hold) draw(step, sync.take(v));
   }
   if (now - lastUi >= 1 / 15) {
     lastUi = now;
-    drawUi(f);
+    drawUi(v);
   }
 }
 
@@ -846,11 +868,10 @@ function draw(dt, f) {
   knobs.update(dt);
   soak(dt);
   if (!st.idle) {
-    // the section, the groove's event and the line of a square, held since the last scene frame
-    const g = f.groove, gv = st.gevent || st.line ? { ...g, event: st.gevent ?? g.event, square: g.square && { ...g.square, line: st.line } } : g;
+    // the section and the groove's event, held since the last scene frame (the beat and the square's line come held)
+    const g = f.groove, gv = st.gevent ? { ...g, event: st.gevent } : g;
     const fs = st.section || gv !== g ? { ...f, section: st.section ?? f.section, groove: gv } : f;
     st.section = st.gevent = null;
-    st.line = false;
     light.update(dt, fs, hits, mood.v, mood.a, st.sceneT, Math.random);
     const seen = thin(hits, gv);
     runScene(st.cur, dt, fs, seen);
@@ -995,7 +1016,7 @@ function drawUi(f) {
   // the groove: the part of the track, where the count stands in its square, and the feel of the pattern
   const g = f.groove, sq = g?.square;
   if (g) $('#groove').textContent = [g.state, sq ? `□ ${sq.bar + 1}.${Math.floor(sq.beat % 4) + 1}/${sq.bars} · #${sq.n}${sq.sure ? '' : '?'}` : '',
-    `lock ${g.lock.toFixed(2)}`, `sync ${g.sync.toFixed(2)}`, `swing ${Math.round(g.swing * 100)}%`].filter(Boolean).join(' · ');
+    `lock ${g.lock.toFixed(2)}`, `sync ${g.sync.toFixed(2)}`, `swing ${Math.round(g.swing * 100)}%`, `ahead ${Math.round(st.ahead * 1000)}ms`].filter(Boolean).join(' · ');
 
   // meters: segmented bars
   const rows = [
@@ -1070,6 +1091,14 @@ $('#lineBtn').addEventListener('click', () => (lineIn ? stopLineIn() : startLine
 $('#inputSel').addEventListener('change', () => lineIn && startLineIn());
 $('#pairSel').addEventListener('change', routePairs);
 $('#gain').addEventListener('input', (e) => { lineGain.gain.value = Number(e.target.value); $('#gainVal').textContent = `${Number(e.target.value).toFixed(1)}×`; });
+const syncText = () => { const ms = Math.round(st.sync * 1000); $('#syncVal').textContent = `${ms >= 0 ? '+' : ''}${ms} ms`; };
+$('#sync').value = Math.round(st.sync * 1000);
+syncText();
+$('#sync').addEventListener('input', (e) => {
+  st.sync = Number(e.target.value) / 1000;
+  syncText();
+  try { localStorage.setItem('ep-visual.sync', String(st.sync)); } catch { /* storage blocked: the trim lasts this visit */ }
+});
 $('#monitor').addEventListener('change', (e) => { monitorGain.gain.value = e.target.checked ? 1 : 0; });
 $('#fade').addEventListener('input', (e) => { st.fade = Number(e.target.value); $('#fadeVal').textContent = `${st.fade}s`; });
 $('#gapBtn').addEventListener('click', (e) => { st.gap = !st.gap; e.currentTarget.classList.toggle('on', st.gap); });
@@ -1194,4 +1223,4 @@ connectJam();
 requestAnimationFrame(loop);
 
 // handy for poking at it from the console
-window.epVisual = { st, mood, listener, light, groove, groups, trigger, emitHit, crossTo, onSection, actx, master, jam, nowPlaying, touch, knobs, recorder, line: () => lineIn };
+window.epVisual = { st, mood, listener, light, groove, sync, groups, trigger, emitHit, crossTo, onSection, actx, master, jam, nowPlaying, touch, knobs, recorder, line: () => lineIn };

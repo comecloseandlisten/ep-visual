@@ -37,7 +37,7 @@ export class LightShow {
   constructor() {
     // strobe, invert, mosaic, noise, swap and freeze: seconds left; flashAt: when the last flash came
     Object.assign(this, { on: true, auto: true, flash: 0, strobe: 0, invert: 0, punch: 0, split: 0, mosaic: 0, noise: 0, vig: 0, roll: -1, trails: 0,
-      swap: 0, freeze: 0, rewind: -1, rewindAt: 0, frozen: null, ring: [], head: 0, gel: { a: 0, c: 0 }, vertigo: 0, flashAt: -1, eighth: -1,
+      swap: 0, freeze: 0, rewind: -1, rewindAt: 0, frozen: null, ring: [], head: 0, gel: { a: 0, c: 0 }, vertigo: 0, flashAt: -1, eighth: -1, down: 0, downHeard: false,
       beam: { x: 0, dir: 1, a: 0, last: 0 }, spot: { x: 0.5, y: 0.5, r: 0.2, a: 0 }, leak: { x: 0.9, y: 0.1, tx: 0.9, ty: 0.1, a: 0 },
       w: {}, prev: null, copy: null, active: [], enabled: Object.fromEntries(EFFECTS.map(([k]) => [k, true])) });
   }
@@ -70,11 +70,19 @@ export class LightShow {
     // a slam (a one-beat stop and the groove back) is a hit of light, not a new picture
     if (g?.event === 'slam') { this.flash = Math.max(this.flash, 0.8 * w.flash); this.punch = Math.max(this.punch, w.punch); }
     if (g?.event === 'fill' && this.roll < 0 && rnd() < 0.3 + 0.7 * w.roll) this.roll = 0;
+    // the beat comes read ahead (sync.js) and a hit as heard, a moment later: a kick that keeps landing on the bar's
+    // downbeat (`down`) is flashed on the downbeat itself, as the room hears it, and the late hit adds nothing then
+    if (onBeat && f.beat.on && f.beat.count % 4 === 0) {
+      if (!this.downHeard) this.down *= 0.5;
+      this.downHeard = false;
+      if (this.down > 0.55 && g?.state !== 'break' && g?.state !== 'pit') this.flash = Math.max(this.flash, (0.25 + 0.75 * this.down) * w.flash);
+    }
     for (const h of hits) {
       if (h.kind === 'kick' || h.kind === 'bass') {
-        // a white flash only on an accent (the bar's downbeat, or a kick far harder than usual); the other kicks
-        // only pump the light a little
-        const accent = onBeat ? f.beat.count % 4 === 0 && f.beat.phase < 0.25 : h.strength > 0.85;
+        // a white flash only on an accent (the bar's downbeat, by the beat the hit was heard on, or a kick far harder
+        // than usual); the other kicks only pump the light a little
+        const at = h.at ?? f.beat.count + f.beat.phase, down = (at + 0.15) % 4 < 0.4, accent = onBeat ? down : h.strength > 0.85;
+        if (onBeat && down && !h.own) { this.down += (h.strength - this.down) * 0.4; this.downHeard = true; }
         if (h.strength > 0.55) this.flash = Math.max(this.flash, (accent ? 0.25 + 0.75 * h.strength : 0.15) * w.flash);
         this.punch = Math.max(this.punch, h.strength * w.punch);
         this.vig = Math.max(this.vig, 0.7 * w.vignette);

@@ -67,6 +67,7 @@
         </div>
         <div class="row" id="pairRow" hidden><span class="lab">ch</span><select id="pairSel" aria-label="input channels"><option value="auto">auto · loudest</option></select></div>
         <label class="slider"><span>gain</span><input id="gain" type="range" min="0" max="4" step="0.1" value="1"><output id="gainVal">1.0×</output></label>
+        <label class="slider" title="how far the picture is read ahead of what the page hears, on top of the lag it measures: more if the picture is late, less if it is early"><span>ahead</span><input id="sync" type="range" min="-150" max="250" step="10" value="0"><output id="syncVal">+0 ms</output></label>
         <label class="check"><input id="monitor" type="checkbox"><span>monitor input</span></label>
         <p class="hint" id="jamInfo"></p>
       </section>
