@@ -18,6 +18,24 @@ The README is for people. This file is the technical map.
 - `js/profiles.js`: per-world ranks on load, motion, react, pulse, burst. Regenerate with
   `node tools/profile_scenes.mjs` after adding worlds.
 - `js/nowplaying.js`, `js/touch.js`, `js/mirror.js`, `js/record.js`, `td.html`: the server-side links below.
+- `td/ep_visual_td.py`: the TouchDesigner side, see below.
+
+## TouchDesigner
+
+`td/ep_visual_td.py` runs inside TouchDesigner (Textport: `exec(open(r'<path>\ep_visual_td.py').read())`) and
+builds `/project1/ep_visual`. The page's pixel grid comes in through a WebSocket DAT and a Script TOP, with
+`td.html` in a Web Render TOP as the fallback. It then runs through a chain of Cross TOPs: displace, gen, mirror,
+feedback, rgbsplit, edge, blur, tint, bloom, hue, strobe. The result lands in `out`, and from there goes to Spout,
+NDI, a window or a movie file.
+
+`gen` is TouchDesigner's own procedural layer. A Script TOP draws one of rings, bars, orbit, lissajous, sparks,
+floor or scope from the music, in the page's 125 grid and the style's palette.
+
+The readings arrive as OSC on 7000 (values) and 7001 (events), and control goes back on 7002. A WebServer DAT on
+9980 serves `/exec`, `/frame.jpg` and the `out` stream. The `notes` DAT it builds lists every address. What turns
+the effects on (`/ep/fx/<effect>`, `/ep/fx/gen/kind`) comes from the server's Director, which picks by mood, style,
+sections and drops. Without the server everything stays at 0 unless it is set by hand in TouchDesigner.
+`API_VERSION` has to match the server's.
 
 ## Content rule
 
@@ -40,8 +58,8 @@ Every call fails quietly without the server (two 404s in the console are expecte
 
 ## Where it comes from
 
-This repository is a standalone copy of the visualizer in a private project (teenage-mcp). Syncs copy the page
-and `js/` over as they are, except two local changes that must survive each sync:
+This repository is a standalone copy of the visualizer in a private project (teenage-mcp). Syncs copy the page,
+`js/` and `td/` over as they are, except two local changes that must survive each sync:
 
 - `js/record.js`: when the upload to the server fails, the clip is downloaded as WebM instead.
 - `tools/profile_scenes.mjs`: paths point at `js/`, not `src/teenage_mcp/visual/js/`.
