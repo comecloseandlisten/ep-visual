@@ -40,28 +40,28 @@ the moment on a valence × arousal map. the mood picks the art.
 
 <table>
   <tr>
-    <td><img src="docs/shots/kandinsky.png" alt="kandinsky"><br><sub><code>kandinsky</code></sub></td>
-    <td><img src="docs/shots/casino.png" alt="casino"><br><sub><code>casino</code></sub></td>
-    <td><img src="docs/shots/coffee.png" alt="coffee"><br><sub><code>coffee</code></sub></td>
-    <td><img src="docs/shots/doomer.png" alt="doomer"><br><sub><code>doomer</code></sub></td>
+    <td width="25%"><img src="docs/shots/kandinsky.png" width="100%" alt="kandinsky"><br><sub><code>kandinsky</code></sub></td>
+    <td width="25%"><img src="docs/shots/casino.png" width="100%" alt="casino"><br><sub><code>casino</code></sub></td>
+    <td width="25%"><img src="docs/shots/coffee.png" width="100%" alt="coffee"><br><sub><code>coffee</code></sub></td>
+    <td width="25%"><img src="docs/shots/doomer.png" width="100%" alt="doomer"><br><sub><code>doomer</code></sub></td>
   </tr>
   <tr>
-    <td><img src="docs/shots/anime.png" alt="anime"><br><sub><code>anime</code></sub></td>
-    <td><img src="docs/shots/epic.png" alt="epic"><br><sub><code>epic</code></sub></td>
-    <td><img src="docs/shots/indie.png" alt="indie"><br><sub><code>indie</code></sub></td>
-    <td><img src="docs/shots/riley.png" alt="riley"><br><sub><code>riley</code></sub></td>
+    <td width="25%"><img src="docs/shots/anime.png" width="100%" alt="anime"><br><sub><code>anime</code></sub></td>
+    <td width="25%"><img src="docs/shots/epic.png" width="100%" alt="epic"><br><sub><code>epic</code></sub></td>
+    <td width="25%"><img src="docs/shots/indie.png" width="100%" alt="indie"><br><sub><code>indie</code></sub></td>
+    <td width="25%"><img src="docs/shots/riley.png" width="100%" alt="riley"><br><sub><code>riley</code></sub></td>
   </tr>
   <tr>
-    <td><img src="docs/shots/space.png" alt="space"><br><sub><code>space</code></sub></td>
-    <td><img src="docs/shots/street.png" alt="street"><br><sub><code>street</code></sub></td>
-    <td><img src="docs/shots/te.png" alt="te"><br><sub><code>te</code></sub></td>
-    <td><img src="docs/shots/pop.png" alt="pop"><br><sub><code>pop</code></sub></td>
+    <td width="25%"><img src="docs/shots/space.png" width="100%" alt="space"><br><sub><code>space</code></sub></td>
+    <td width="25%"><img src="docs/shots/street.png" width="100%" alt="street"><br><sub><code>street</code></sub></td>
+    <td width="25%"><img src="docs/shots/te.png" width="100%" alt="te"><br><sub><code>te</code></sub></td>
+    <td width="25%"><img src="docs/shots/pop.png" width="100%" alt="pop"><br><sub><code>pop</code></sub></td>
   </tr>
   <tr>
-    <td><img src="docs/shots/bangkok.png" alt="bangkok"><br><sub><code>bangkok</code></sub></td>
-    <td><img src="docs/shots/ps1.png" alt="ps1"><br><sub><code>ps1</code></sub></td>
-    <td><img src="docs/shots/stealth.png" alt="stealth"><br><sub><code>stealth</code></sub></td>
-    <td><img src="docs/shots/surreal.png" alt="surreal"><br><sub><code>surreal</code></sub></td>
+    <td width="25%"><img src="docs/shots/bangkok.png" width="100%" alt="bangkok"><br><sub><code>bangkok</code></sub></td>
+    <td width="25%"><img src="docs/shots/ps1.png" width="100%" alt="ps1"><br><sub><code>ps1</code></sub></td>
+    <td width="25%"><img src="docs/shots/stealth.png" width="100%" alt="stealth"><br><sub><code>stealth</code></sub></td>
+    <td width="25%"><img src="docs/shots/surreal.png" width="100%" alt="surreal"><br><sub><code>surreal</code></sub></td>
   </tr>
 </table>
 
