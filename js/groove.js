@@ -33,12 +33,29 @@ const meanDb = (a) => toDb(mean(a.map((x) => 10 ** (x / 10))));
 export const PARTS = ['pit', 'break', 'build', 'groove', 'peak', 'drop'];
 
 // What the music asks of a picture now, on the axes of profiles.js (load, motion, react, pulse, burst): as
-// cluttered as the budget allows, as much motion as there is energy, keeping to the beat when the groove is locked
-// and straight, following the hits when it is broken or off the beat, jerky on a drop and smooth in a breakdown.
+// cluttered as the budget allows, as much motion as there is energy and drive, keeping to the beat when the groove
+// is locked and straight, following the hits when it is broken or off the beat, jerky on a drop and smooth in a
+// breakdown. Then how lively it must be (liveOf): the still pictures go where the music leaves a hole (a pit, a
+// breakdown), a build climbs out of them, and in the groove it is the drive that says, so a track that pounds all
+// the way through gets no picture standing still however much the groove is its own usual.
 export function wantOf(g) {
   if (!g) return null;
-  const off = g.sync - 0.5, burst = { pit: 0.1, break: 0.15, build: 0.35 + 0.4 * g.tension, drop: 0.85, peak: 0.75 }[g.state] ?? 0.3 + 0.4 * g.budget;
-  return [g.budget, clamp(0.15 + 0.4 * g.energy + 0.4 * g.budget), clamp(0.35 + 1.5 * off + 0.3 * (1 - g.lock)), clamp(1.2 * g.lock - off), burst];
+  const off = g.sync - 0.5, d = g.drive ?? 0.5, burst = { pit: 0.1, break: 0.15, build: 0.35 + 0.4 * g.tension, drop: 0.85, peak: 0.75 }[g.state] ?? 0.3 + 0.4 * g.budget;
+  const live = { pit: 0.1, break: 0.2, build: 0.35 + 0.45 * g.tension, drop: Math.max(0.75, d), peak: Math.max(0.65, d) }[g.state] ?? 0.2 + 0.7 * d;
+  return [g.budget, clamp(0.1 + 0.3 * g.energy + 0.3 * g.budget + 0.35 * d), clamp(0.35 + 1.5 * off + 0.3 * (1 - g.lock)), clamp(1.2 * g.lock - off), burst, live];
+}
+
+// How lively a world is, 0..1: the most it does of moving all the time, moving on the beat and jumping at the hits
+// (a picture that only jumps at the kick is lively enough for the kick). None measured counts as middling.
+export const liveOf = (p) => (p ? Math.max(p[1], p[3], 0.85 * p[2]) : 0.5);
+
+// How well a world's liveliness answers the moment, 0..1, beside grooveFit: a gate, not a lean. A world much stiller
+// than the music drives is all but out (never quite: the odd one is allowed); one livelier than a breakdown wants
+// only leans out. A style with no measured groove of its own (a whole family, a story) is let be.
+export function liveFit(profile, want) {
+  if (!want || want[5] == null || !profile) return 1;
+  const d = want[5] - liveOf(profile);
+  return d > 0 ? Math.max(0.03, Math.exp(-(d * d) / 0.03)) : Math.max(0.15, Math.exp(-(d * d) / 0.12));
 }
 
 // How well a scene's measured groove (`profile`, from profiles.js; none counts as middling) answers `want`, 0..1.
@@ -61,6 +78,7 @@ export class Groove {
     this.startT = null; // when the track started, if it came out of silence
     this.anchor = null; // the squares' clock: { t: a moment a square began, T: the beat period, n: the square now }
     this.len = SQUARE0; // beats in a square, as the marks have it
+    this.drive = 0.5; // how much is going on, as such (frame)
     this.reset();
   }
 
@@ -141,7 +159,7 @@ export class Groove {
     }
     this.frame(f, now, dt, T);
     return {
-      state: this.state, event: this.event, energy: this.energy, budget: this.budget, tension: this.tension,
+      state: this.state, event: this.event, energy: this.energy, drive: this.drive, budget: this.budget, tension: this.tension,
       lock: this.lock, sync: this.sync(), swing: clamp(this.swingAcc / 0.33, -1, 1), step: this.step, stepW: this.stepW,
       pulse: this.pulse, fill: this.fill, armed: this.armed, tmpl: this.tmpl, ready: !!this.ref,
       square: sq, shift: this.shift,
@@ -318,6 +336,10 @@ export class Groove {
     // the energy: the last moments against the track's full level, plus the hits of the last two beats
     const dens = mean(this.recent.slice(-2).map((x) => x.dens));
     this.energy = r ? 0.4 * clamp(1 - (r.loud - fa.loudSlow) / 12) + 0.4 * clamp(1 - (r.low - fa.lowSlow) / 18) + 0.2 * clamp(dens / (r.dens + 1e-3)) : 0.6;
+    // the drive: how much is going on as such, not against the track's own level: the tempo as counted (174 drum &
+    // bass all of it, 120 under half), the hits a second and how busy the top end is. It outlasts a track change
+    const tempo = f.tempo ? clamp((f.tempo - 80) / 90) : 0;
+    if (f.level > 0.05) this.drive = follow(this.drive, 0.35 * tempo + 0.35 * clamp(f.onsetRate / 5) + 0.3 * clamp(f.busy / 0.13), dt, 1);
 
     // The pit: a sudden hole against the last few beats, near silence or the bass and most of the rest cut away. It
     // is called as soon as a strong hit the groove expects does not come; without a template to expect by, once

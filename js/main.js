@@ -3,7 +3,7 @@ import { Raster, bayer, clamp, hexRgb, makeNoise, rankMap, rng } from './pixels.
 import { Listener, MOODS, Mood, analyzeBuffer } from './analysis.js';
 import { MOOD_STYLES, STYLES, styleMeaning } from './styles.js';
 import { EFFECTS, LightShow } from './light.js';
-import { Groove, grooveFit, wantOf } from './groove.js';
+import { Groove, grooveFit, liveFit, wantOf } from './groove.js';
 import { PROFILES } from './profiles.js';
 import { meaning, meaningKey } from './meaning.js';
 import { renewNext } from './mixer.js';
@@ -144,7 +144,7 @@ function nextVariant(moodName) {
   const styles = orderFor(moodName), at = st.variant[moodName] || 0, want = wantOf(st.f?.groove);
   const profile = (k) => PROFILES[k === 'te' ? 'story' : k];
   const span = Math.min(meaning() ? styles.length - 1 : 3, styles.length - 1), before = st.prevStyle;
-  const score = (k) => { const n = styles[k % styles.length]; return (0.25 + grooveFit(profile(n), want)) * styleMeaning(n) * (n === before ? 0.6 : 1); };
+  const score = (k) => { const n = styles[k % styles.length]; return (0.25 + grooveFit(profile(n), want)) * liveFit(profile(n), want) * styleMeaning(n) * (n === before ? 0.6 : 1); };
   let best = at + 1;
   for (let k = at + 1; k <= at + span; k++) if (score(k) > score(best)) best = k;
   st.prevStyle = styles[at % styles.length];
@@ -801,8 +801,9 @@ function step(ms) {
     }
   } else st.want = null;
   // a story style asks for its next story by finishing the last one (a mix, for its next world): grow it in over the
-  // old one, on the line of a square
-  if (st.cur.s.done && !st.prev && !st.idle && (!sq || sq.line) && !waiting) {
+  // old one, on the line of a square (a world that does not go with how lively the music is, on the bar line)
+  const line = !sq || sq.line || (st.cur.s.urgent && vb.on && vb.count % 4 === 0);
+  if (st.cur.s.done && !st.prev && !st.idle && line && !waiting) {
     st.seed = (Math.random() * 2 ** 32) >>> 0;
     crossTo(st.cur.name);
   }
@@ -1022,7 +1023,7 @@ function drawUi(f) {
   const rows = [
     ['level', f.level], ['low', f.low], ['mid', f.mid], ['high', f.high], ['bright', f.bright],
     ['tonal', f.tonalAvg], ['hits/s', clamp(f.onsetRate / 8)], ['beat', f.beat.pulse], ['ink', clamp(st.ink)],
-    ['energy', g?.energy ?? 0], ['budget', g?.budget ?? 0], ['tension', g?.tension ?? 0],
+    ['energy', g?.energy ?? 0], ['drive', g?.drive ?? 0], ['budget', g?.budget ?? 0], ['tension', g?.tension ?? 0],
   ];
   const MW = 300, seg = 24, x0 = 64, sw = (MW - x0) / seg;
   metCtx.clearRect(0, 0, MW, metCtx.canvas.height);

@@ -8,7 +8,7 @@
 // breakdown strips the picture down to one screen and a light treatment.
 import { Raster, clamp, lerp, mixHex } from './pixels.js';
 import { MOOD_VA } from './story.js';
-import { grooveFit, wantOf } from './groove.js';
+import { grooveFit, liveFit, liveOf, wantOf } from './groove.js';
 import { PROFILES } from './profiles.js';
 import { addThemes, fxMeaning, meaning, palMeaning, worldMeaning } from './meaning.js';
 
@@ -462,7 +462,7 @@ export function pickRecipe(rnd, mood, prev, axis, pool = Object.keys(DEFS), want
   const [v, a] = MOOD_VA[mood] || MOOD_VA.focused, budget = want ? want[0] : 0.5;
   const means = (T, k) => (MEANS.get(T)?.(k) ?? 1);
   const moodOf = (T, k) => fit(T[k].va, v, a);
-  const fitOf = (T, k) => moodOf(T, k) * means(T, k) * (T === DEFS && want ? 0.25 + grooveFit(PROFILES[k], want) : 1);
+  const fitOf = (T, k) => moodOf(T, k) * means(T, k) * (T === DEFS && want ? (0.25 + grooveFit(PROFILES[k], want)) * liveFit(PROFILES[k], want) : 1);
   const goes = (world, kind, k) => (DEFS[world][kind].includes(k) ? 1 : 0.3);
   const inPool = (k) => !!k && pool.includes(k);
   const light = pool.filter((k) => !DEFS[k].heavy);
@@ -591,6 +591,14 @@ export function makeMixStyle(title, families = null) {
         s.swapX = sq ? sq.x : null;
       }
       const hold = g && (g.state === 'build' || g.state === 'pit');
+      // a world that does not go with how lively the music is does not wait for its act: one standing still while
+      // the drums pound, for two bars, or one busy all over in a breakdown, at once. It goes on the next bar line
+      // (`urgent`, main.js), and the next world is picked for the moment as it is
+      if (want && !s.done && !hold && (f.beat.on || g.event === 'break')) {
+        const miss = want[5] - liveOf(PROFILES[s.recipe.world]);
+        s.misfit = miss > 0.3 ? (s.misfit || 0) + (f.beat.on ? 1 : 0) : 0;
+        if (s.misfit >= 8 || (g.state === 'break' && miss < -0.5)) { s.done = s.urgent = true; nextAxis = 'world'; }
+      }
       const since = sq ? sq.x - s.swapX : s.beats - s.lastSwap;
       const due = sq ? sq.line && (since >= (s.a > 0.42 ? 16 : 32) * (g.state === 'break' ? 2 : 1) - 2 || (s.pull && since >= 6))
         : since >= 4 * (s.a > 0.6 ? 3 : s.a > 0.42 ? 4 : 6) || (f.section === 'change' && since >= 8);

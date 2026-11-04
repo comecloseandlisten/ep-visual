@@ -116,7 +116,7 @@ h2 b {
 #map { display: block; }
 .mono { white-space: pre; }
 
-#meters { display: block; width: 300px; height: 284px; }
+#meters { display: block; width: 300px; height: 300px; }
 
 .groups { margin-left: auto; display: flex; gap: 4px; }
 .grp {

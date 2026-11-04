@@ -16,7 +16,8 @@ The README is for people. This file is the technical map.
 - `js/knobs.js`: a world's own parameters (speed, react, size, zoom/pan/turn, echo, hue/sat/light), set by
   `knobs` server events; they glide to their targets.
 - `js/profiles.js`: per-world ranks on load, motion, react, pulse, burst. Regenerate with
-  `node tools/profile_scenes.mjs` after adding worlds.
+  `node tools/profile_scenes.mjs` after adding worlds: a world left out counts as middling, and the liveliness
+  gate (`liveFit` in `js/groove.js`, against the groove's absolute `drive`) cannot tell it from the others.
 - `js/nowplaying.js`, `js/touch.js`, `js/mirror.js`, `js/record.js`, `td.html`: the server-side links below.
 - `td/ep_visual_td.py`: the TouchDesigner side, see below.
 
