@@ -45,6 +45,12 @@ The Director also keeps a budget of noise. The page measures the world on the ca
 `Touch.look`) and sends the groove's `groove/budget`; what that leaves is `noise/room`. An element has to weigh less than
 the room (`td/gen/weights.json`), and the loud effects and the element are turned down together to fit it, so a crowded
 world or a breakdown gets a thin line or nothing, and a bare one can take a lot.
+
+And it plays the form of the track. The page tells it the parts and the squares (`/part`, `/line`, `/newtrack`, `groove/*`,
+`square/*`): everything moves on the line of a square, a track is held back until its first drop, a build climbs with its
+tension, the pit before a drop goes empty, the drop is called on its line, and a part that comes back gets the element it
+had. `weights.json` holds each element's [weight, speed, pulse, free], ranked 0..1, which it picks by. `/ep/fx/gen/space`
+keeps an element out of what is busy in the picture: `frames_callbacks` keeps a 25 x 25 map of that (`ep_busy`).
 `API_VERSION` has to match the server's.
 
 ## Content rule

@@ -30,7 +30,7 @@
 # differently is skipped and listed at the end (and in the `notes` DAT), so it can be fixed by hand or through the
 # MCP tool td_set.
 
-API_VERSION = 6  # what this script builds; teenage_mcp.tdfx.API_VERSION is what the server expects
+API_VERSION = 7  # what this script builds; teenage_mcp.tdfx.API_VERSION is what the server expects
 PAGE = 'http://127.0.0.1:8133/'
 PORT = 7000
 API_PORT = 9980
@@ -453,6 +453,23 @@ def onReceivePong(dat, contents):
     return
 
 
+def _busy(a, n):
+    # where the picture has something going on, 0..1, on a 25 x 25 map for the procedural layer to keep out of: how far
+    # each block's cells stray from their neighbours, spread a little (every grid the page has divides by 25)
+    if n % 25:
+        return
+    light = a[:, :, :3].astype(np.float32).mean(axis=2) / 255
+    edges = np.abs(light[:, 1:] - light[:, :-1])[:-1] + np.abs(light[1:] - light[:-1])[:, :-1]
+    k = n // 25
+    edges = np.pad(edges, ((0, 1), (0, 1)))
+    block = edges.reshape(25, k, 25, k).mean(axis=(1, 3))
+    wide = np.pad(block, 1)
+    block = np.maximum(block, 0.5 * (wide[:-2, 1:-1] + wide[2:, 1:-1]))
+    wide = np.pad(block, 1)
+    block = np.maximum(block, 0.5 * (wide[1:-1, :-2] + wide[1:-1, 2:]))
+    op(ROOT).store('ep_busy', np.clip(block / 0.16, 0, 1)[::-1 if FLIP else 1])
+
+
 def onReceiveBinary(dat, contents):
     data = bytes(contents)
     if len(data) < 4:
@@ -466,6 +483,7 @@ def onReceiveBinary(dat, contents):
         return
     a = np.frombuffer(cells, dtype=np.uint8).reshape(n, n, 4).copy()
     a[a[:, :, 3] == 0] = PAPER
+    _busy(a, n)
     k = max(1, 1000 // n)  # whole pixels: 125 -> 1000, 200 -> 1000
     a = a.repeat(k, 0).repeat(k, 1)
     if FLIP:
@@ -954,6 +972,11 @@ def draw(dt):
     hot, other = _colours()
     GENS[kind](img, m, dt, max(0.3, _v('fx/gen/size', 1.0)), hot, other)
     rgb = np.clip(img, 0, 1)
+    space = _v('fx/gen/space')
+    comp = op(ROOT)
+    busy = comp.fetch('ep_busy', None) if space > 0.01 and comp is not None else None
+    if busy is not None:  # the element keeps to the free parts of the picture
+        rgb = rgb * (1 - space * busy.repeat(N // 25, 0).repeat(N // 25, 1))[..., None].astype(np.float32)
     return np.concatenate([rgb, rgb.max(axis=2, keepdims=True)], 2)
 
 

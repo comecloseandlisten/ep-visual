@@ -1186,7 +1186,7 @@ const nowPlaying = new NowPlaying({
   $, actx, listener, mood, status, audioInputs, startLineIn, useLineStream,
   // a new track is a new composition: the parts and the squares start over at once; the picture follows once the
   // track is described (what it is about decides the worlds), or after a few seconds without a description
-  newTrack: () => groove.newTrack(),
+  newTrack: () => { groove.newTrack(); touch.newTrack(); },
   // when the playing track's 0:00 played (the player's clock, seconds since 1970), or null: the squares count from there
   timeline: (startAt) => {
     trackStart = startAt;

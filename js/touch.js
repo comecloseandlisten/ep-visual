@@ -266,6 +266,13 @@ export class Touch {
     this.kickAt = now;
   }
 
+  // a new track: the Directors start reading its form afresh
+  newTrack() {
+    if (!this.speaking) return;
+    this.sent.part = null;
+    this.queue.push(['/newtrack']);
+  }
+
   hit(kind, strength) {
     if (!this.speaking) return;
     const now = performance.now() / 1000;
@@ -284,13 +291,16 @@ export class Touch {
       this.queue.push(['/section', f.section]);
     }
     if (f.beat.on) this.queue.push(['/beat', f.beat.count, f.bpm]);
-    if (now - this.last < 1 / RATE - 0.002) return;
+    const g = f.groove, line = g?.square?.line; // (a line goes out at once: the Director moves on it)
+    if (line) this.queue.push(['/line', g.square.n, g.square.bars]);
+    if (!line && now - this.last < 1 / RATE - 0.002) return;
     this.last = now;
     const { st, mood } = this.ctx, sc = st.cur, keyName = f.key ? f.key.name : 'none';
     const changed = (k, v) => this.sent[k] !== v && ((this.sent[k] = v), true);
     if (changed('mood', st.moodName || mood.name)) this.queue.push(['/mood', this.sent.mood]);
     if (changed('scene', sc.name)) this.queue.push(['/scene', sc.name, sc.def.title]);
     if (changed('key', keyName)) this.queue.push(['/key', keyName]);
+    if (g && changed('part', g.state)) this.queue.push(['/part', g.state]);
     const msg = JSON.stringify({ v: this.values(f, now), e: this.queue.splice(0) });
     if (this.ws.bufferedAmount < 1 << 16) this.ws.send(msg); // a stalled socket drops frames rather than piling up
   }
@@ -308,6 +318,8 @@ export class Touch {
       'scene/index': this.keys.indexOf(sc.name), 'scene/mix': st.prev ? st.mix : 1, 'scene/time': st.sceneTime,
       'scene/geo': sceneGeo(sc) && (!st.prev || sceneGeo(st.prev)) ? 1 : 0,
       'scene/detail': this.detail, 'scene/motion': this.motion, 'groove/budget': f.groove?.budget ?? 1,
+      'groove/tension': f.groove?.tension ?? 0, 'groove/energy': f.groove?.energy ?? 0.5, 'groove/drive': f.groove?.drive ?? 0.5,
+      'groove/lock': f.groove?.lock ?? 0, 'square/bar': f.groove?.square?.bar ?? 0, 'square/bars': f.groove?.square?.bars ?? 4,
       ink: st.ink, idle: st.idle ? 1 : 0, hit: this.hits[''].at(now),
     };
     for (const n of ['bass', 'mid', 'treb']) {
