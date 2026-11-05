@@ -45,6 +45,7 @@ const mood = new Mood();
 const light = new LightShow(); // flashes, beams and leaks over whatever is on the canvas
 const groove = new Groove(); // how much the picture can take right now, and where the squares begin
 const sync = new Sync(); // the beat and the squares where the room hears them, held for the scene frames
+const lightSync = new Sync(); // the same for the light: last in line, it doesn't go the way round through TouchDesigner
 let lineIn = null;
 const resume = () => actx.state !== 'running' && actx.resume();
 
@@ -756,6 +757,7 @@ function step(ms) {
   // the frame as the room hears it: what the picture, the light, the cuts and TouchDesigner go by
   st.ahead = ahead(f);
   const v = sync.view(f, now, dt, st.ahead);
+  const lv = touch.showing ? lightSync.view(f, now, dt, Math.max(0, st.ahead - touch.lag)) : null;
 
   if (f.onset) {
     const k = classifyOnset(f.onset, f);
@@ -825,7 +827,7 @@ function step(ms) {
   if (now - lastDraw >= 1 / FPS - 0.002) {
     const step = Math.min(0.1, now - lastDraw);
     lastDraw = now;
-    if (!st.hold) draw(step, sync.take(v));
+    if (!st.hold) draw(step, sync.take(v), lv && lightSync.take(lv));
   }
   if (now - lastUi >= 1 / 15) {
     lastUi = now;
@@ -872,7 +874,8 @@ function thin(hits, g) {
   return keep >= 1 ? hits : hits.filter((h) => h.own || h.strength > 0.9 || Math.random() < (h.pc >= 0 ? Math.max(keep, 0.6) : keep));
 }
 
-function draw(dt, f) {
+// `lit`: the frame as the light goes by it, when that isn't `f`
+function draw(dt, f, lit = null) {
   const N = st.N, hits = st.hits.splice(0);
   st.sceneT += dt;
   knobs.update(dt);
@@ -882,7 +885,7 @@ function draw(dt, f) {
     const g = f.groove, gv = st.gevent ? { ...g, event: st.gevent } : g;
     const fs = st.section || gv !== g ? { ...f, section: st.section ?? f.section, groove: gv } : f;
     st.section = st.gevent = null;
-    light.update(dt, fs, hits, mood.v, mood.a, st.sceneT, Math.random);
+    light.update(dt, lit ? { ...fs, beat: lit.beat, groove: gv && { ...gv, square: lit.groove?.square ?? gv.square } } : fs, hits, mood.v, mood.a, st.sceneT, Math.random);
     const seen = thin(hits, gv);
     runScene(st.cur, dt, fs, seen);
     if (st.prev) {
@@ -931,11 +934,12 @@ function draw(dt, f) {
       data[p + 3] = 255;
     }
   st.ink = shown / (N * N);
-  // to TouchDesigner as painted, without the light show: it lays its own effects over it (its strobe, its bloom),
-  // and while its result is on the canvas the page's light would only be drawn over, so it rests
+  // to TouchDesigner as painted, without the light show: it lays its own effects over it (its strobe, its bloom). The
+  // light is the last thing of all: on the pixel grid here, or, while its result is on the canvas, over that (below)
   touch.look(cur.raster.buf, N);
   touch.sendFrame(N, img.data, vis);
-  if (light.on && !st.idle && !touch.showing) light.apply(img.data, N, N / 125, st.ink);
+  const fromTd = touch.showing, lighting = light.on && !st.idle;
+  if (lighting && !fromTd) light.apply(img.data, N, N / 125, st.ink);
   smallCtx.putImageData(img, 0, 0);
   bigCtx.imageSmoothingEnabled = false;
   bigCtx.drawImage(small, 0, 0, SIZE, SIZE);
@@ -945,7 +949,8 @@ function draw(dt, f) {
     bigCtx.drawImage(gapLayer, 0, 0);
     bigCtx.globalCompositeOperation = 'source-over';
   }
-  touch.drawView(bigCtx, SIZE); // and what it made of it, while TD FX is on
+  if (fromTd && lighting) light.over(bigCtx, touch.bmp, SIZE, st.ink);
+  else touch.drawView(bigCtx, SIZE); // what it made of it, while TD FX is on
   if (st.label) drawLabel(f);
   if (st.ink < 0.001 && !st.drops.length && f.level < 0.1) st.idle = true;
 }

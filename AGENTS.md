@@ -13,7 +13,10 @@ The README is for people. This file is the technical map.
 - `js/styles.js` → `js/mixer.js`: every family file (`js/<family>.js`) registers its worlds with
   `registerFamily`; `DEFS` holds them all (414 at the time of writing, 41 entries in the **art** menu).
   `geo: true` on a world's def is what allows kaleidoscope/mirror treatments over it.
-- `js/light.js`: the light show over the canvas. `js/meaning.js`: themes a track is about → worlds.
+- `js/light.js`: the light show over the canvas, the last link of all: `apply` on the page's pixel grid, `over` on the
+  canvas over what TouchDesigner made (at that size only the graphics card can afford it; an effect added to one needs
+  its twin in the other). It keeps its own read-ahead: it doesn't go the way round through TouchDesigner.
+- `js/meaning.js`: themes a track is about → worlds.
 - `js/knobs.js`: a world's own parameters (speed, react, size, zoom/pan/turn, echo, hue/sat/light), set by
   `knobs` server events; they glide to their targets.
 - `js/profiles.js`: per-world ranks on load, motion, react, pulse, burst. Regenerate with

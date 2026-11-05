@@ -39,7 +39,7 @@ export class LightShow {
     Object.assign(this, { on: true, auto: true, flash: 0, strobe: 0, invert: 0, punch: 0, split: 0, mosaic: 0, noise: 0, vig: 0, roll: -1, trails: 0,
       swap: 0, freeze: 0, rewind: -1, rewindAt: 0, frozen: null, ring: [], head: 0, gel: { a: 0, c: 0 }, vertigo: 0, flashAt: -1, eighth: -1, down: 0, downHeard: false,
       beam: { x: 0, dir: 1, a: 0, last: 0 }, spot: { x: 0.5, y: 0.5, r: 0.2, a: 0 }, leak: { x: 0.9, y: 0.1, tx: 0.9, ty: 0.1, a: 0 },
-      w: {}, prev: null, copy: null, active: [], enabled: Object.fromEntries(EFFECTS.map(([k]) => [k, true])) });
+      w: {}, prev: null, copy: null, active: [], sheets: {}, mode: 'cells', held: null, past: false, enabled: Object.fromEntries(EFFECTS.map(([k]) => [k, true])) });
   }
 
   // an effect switched on or off from the toolbar; off also puts out whatever of it is still showing
@@ -151,6 +151,7 @@ export class LightShow {
   // the composed picture, RGBA at N x N; `ink`: how much of it is painted (0..1), which the lights that fall on the
   // picture (beam, spot, leak, vignette, gel) follow, so a drying canvas takes them down with it
   apply(data, N, u, ink = 1) {
+    if (this.mode !== 'cells') { this.mode = 'cells'; this.copy = null; }
     const M2 = N * N, cx = N / 2, cy = N / 2;
     if (!this.copy || this.copy.length !== data.length) { this.copy = new Uint8ClampedArray(data.length); this.prev = null; this.ring = []; this.head = 0; this.frozen = null; this.rewind = -1; this.freeze = 0; }
     const copy = this.copy;
@@ -230,8 +231,8 @@ export class LightShow {
       for (let k = M2 * 0.3; k > 0; k--) { const i = Math.floor(Math.random() * M2) * 4, v = Math.random() * 255; data[i] = data[i + 1] = data[i + 2] = v; }
     }
     if (this.roll >= 0) { // a bright line rolling down, off a hat
-      const y0 = Math.min(N - 2, Math.floor(this.roll * N));
-      for (let i = y0 * N * 4, e = (y0 + 2) * N * 4; i < e; i += 4) { data[i] += (255 - data[i]) * 0.6; data[i + 1] += (255 - data[i + 1]) * 0.6; data[i + 2] += (255 - data[i + 2]) * 0.6; }
+      const h = Math.max(2, Math.round(2 * u)), y0 = Math.min(N - h, Math.floor(this.roll * N));
+      for (let i = y0 * N * 4, e = (y0 + h) * N * 4; i < e; i += 4) { data[i] += (255 - data[i]) * 0.6; data[i + 1] += (255 - data[i + 1]) * 0.6; data[i + 2] += (255 - data[i + 2]) * 0.6; }
     }
     if (this.gel.a * lit > 0.03) { // the gel: one colour kept, the others held down
       const [gr, gg, gb] = GELS[this.gel.c], a = this.gel.a * lit, kr = 1 - a * (1 - gr), kg = 1 - a * (1 - gg), kb = 1 - a * (1 - gb);
@@ -244,8 +245,149 @@ export class LightShow {
       if (this.ring.length < RING) this.ring.push(new Uint8ClampedArray(data));
       else { this.ring[this.head].set(data); this.head = (this.head + 1) % RING; }
     }
-    this.active = [doFlash && 'flash', this.strobe > 0 && 'strobe', inv && 'invert', this.punch > 0.02 && 'punch', this.split > 0.05 && 'split', this.mosaic > 0 && 'mosaic',
-      doBeam && 'beam', doSpot && 'spot', doLeak && 'leak', doVig && 'vignette', this.roll >= 0 && 'roll', !!prev && 'trails', this.noise > 0 && 'noise',
-      this.swap > 0 && 'swap', this.freeze > 0 && 'freeze', this.rewind >= 0 && 'rewind', this.gel.a * lit > 0.03 && 'gel', this.vertigo > 0.03 && 'vertigo'].filter(Boolean);
+    this.note(doFlash, inv, doBeam, doSpot, doLeak, doVig, !!prev, this.gel.a * lit > 0.03);
+  }
+
+  // A sheet to draw on, kept by name: a canvas no one sees.
+  sheet(name, S) {
+    const had = this.sheets[name];
+    if (had?.canvas.width === S) return had;
+    const g = new OffscreenCanvas(S, S).getContext('2d');
+    g.imageSmoothingEnabled = false;
+    return (this.sheets[name] = g);
+  }
+
+  // The same light, for a picture too big to go through pixel by pixel (what TouchDesigner made, at the size of the
+  // canvas): drawn over it on the canvas, by the graphics card, nothing read back. Last of all, on `ctx`.
+  over(ctx, src, S, ink = 1) {
+    if (this.mode !== 'canvas') { this.mode = 'canvas'; this.ring = []; this.head = 0; this.held = null; this.past = false; }
+    const u = S / 125, c = S / 2, lit = clamp(ink / 0.25), wash = (colour) => { ctx.fillStyle = colour; ctx.fillRect(0, 0, S, S); };
+    const mode = (m) => { ctx.globalCompositeOperation = m; };
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.globalAlpha = 1;
+    let pic = src;
+    if (this.rewind >= 0) { // the history ring played back from the newest frame
+      const k = this.rewind++;
+      pic = this.ring[(this.head - 1 - k + RING * 2) % RING]?.canvas ?? src;
+      if (this.rewind >= RING) this.rewind = -1;
+    } else if (this.freeze > 0) { // a held frame
+      if (!this.held) { this.held = this.sheet('held', S); this.held.drawImage(src, 0, 0, S, S); }
+      pic = this.held.canvas;
+    } else this.held = null;
+    const zoom = 1 + 0.07 * this.punch + 0.14 * this.vertigo, at = c - c * zoom, size = S * zoom;
+    if (this.mosaic > 0) { // big pixels for a frame or two
+      const m = this.sheet('mosaic', 40);
+      m.drawImage(pic, 0, 0, 40, 40);
+      ctx.drawImage(m.canvas, at, at, size, size);
+    } else if (this.split > 0.05) { // red one way, blue the other
+      const dx = Math.max(1, Math.round(this.split * 3 * u)), w = this.sheet('work', S);
+      wash('#000');
+      mode('lighter');
+      for (const [shift, colour] of [[dx, '#f00'], [0, '#0f0'], [-dx, '#00f']]) {
+        w.globalCompositeOperation = 'source-over';
+        w.drawImage(pic, at + shift, at, size, size);
+        w.globalCompositeOperation = 'multiply';
+        w.fillStyle = colour;
+        w.fillRect(0, 0, S, S);
+        ctx.drawImage(w.canvas, 0, 0);
+      }
+      mode('source-over');
+    } else ctx.drawImage(pic, at, at, size, size);
+    if (this.freeze > 0 && this.rewind < 0) { // lit blue
+      mode('multiply');
+      wash('rgb(140, 191, 217)');
+      mode('lighter');
+      wash('rgb(0, 0, 40)');
+      mode('source-over');
+    }
+    const flash = Math.min(1, this.flash), inv = this.invert > 0, vig = this.vig * lit, beam = this.beam, spot = this.spot, leak = this.leak;
+    const ba = beam.a * lit, sa = spot.a * lit, la = leak.a * lit, ta = 0.4 * this.trails;
+    const doBeam = ba > 0.08, doSpot = sa > 0.08, doLeak = la > 0.05, doVig = vig > 0.02, doFlash = flash > 0.02, doGel = this.gel.a * lit > 0.03;
+    if (doBeam) {
+      const x = beam.x * S, w = 0.06 * S, g = ctx.createLinearGradient(x - w, 0, x + w, 0), a = 0.55 * ba;
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(0.5, `rgba(255,255,255,${a})`);
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - w, 0, 2 * w, S);
+    }
+    if (doSpot) {
+      const x = spot.x * S, y = spot.y * S, r = spot.r * S, g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, `rgba(255,255,255,${0.6 * sa})`);
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      wash(g);
+    }
+    if (doLeak) { // warm, added on
+      const x = leak.x * S, y = leak.y * S, r = 0.45 * S, g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      for (const d of [0, 0.25, 0.5, 0.75, 1]) {
+        const k = la * (1 - d) ** 2;
+        g.addColorStop(d, `rgb(${140 * k}, ${70 * k}, ${15 * k})`);
+      }
+      mode('lighter');
+      wash(g);
+      mode('source-over');
+    }
+    if (doVig) {
+      const g = ctx.createRadialGradient(c, c, 0.3 * S, c, c, 0.7 * S), dark = Math.round(255 * (1 - 0.7 * vig));
+      g.addColorStop(0, '#fff');
+      g.addColorStop(1, `rgb(${dark}, ${dark}, ${dark})`);
+      mode('multiply');
+      wash(g);
+      mode('source-over');
+    }
+    const trail = ta > 0.008 && this.past; // the afterimages are of the lit picture, never of a flash, a negative or static
+    if (trail) {
+      ctx.globalAlpha = ta;
+      ctx.drawImage(this.sheet('past', S).canvas, 0, 0);
+      ctx.globalAlpha = 1;
+    }
+    if (ta > 0.008) { this.sheet('past', S).drawImage(ctx.canvas, 0, 0); this.past = true; } else this.past = false;
+    if (inv) {
+      mode('difference');
+      wash('#fff');
+      mode('source-over');
+    }
+    if (doFlash) wash(`rgba(255,255,255,${flash})`);
+    if (this.noise > 0) { // static, right after a drop
+      const n = this.sheet('noise', 125), px = n.createImageData(125, 125), d = px.data;
+      for (let i = 0; i < d.length; i += 4) { d[i] = d[i + 1] = d[i + 2] = Math.random() * 255; d[i + 3] = Math.random() < 0.26 ? 255 : 0; }
+      n.putImageData(px, 0, 0);
+      ctx.drawImage(n.canvas, 0, 0, S, S);
+    }
+    if (this.roll >= 0) { // a bright line rolling down, off a hat
+      const h = Math.round(2 * u);
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.fillRect(0, Math.min(S - h, Math.floor(this.roll * S)), S, h);
+    }
+    if (doGel) { // one colour kept, the others held down
+      const a = this.gel.a * lit;
+      mode('multiply');
+      wash(`rgb(${GELS[this.gel.c].map((k) => Math.round(255 * (1 - a * (1 - k)))).join(', ')})`);
+      mode('source-over');
+    }
+    if (this.swap > 0) { // the colours turn round
+      const w = this.sheet('work', S);
+      w.globalCompositeOperation = 'source-over';
+      w.drawImage(ctx.canvas, 0, 0);
+      ctx.filter = 'hue-rotate(120deg)';
+      ctx.drawImage(w.canvas, 0, 0);
+      ctx.filter = 'none';
+    }
+    if (this.rewind < 0 && this.enabled.rewind) { // remember the lit frame for the rewind, at half the size
+      if (this.ring.length < RING) { const g = new OffscreenCanvas(S / 2, S / 2).getContext('2d'); this.ring.push(g); }
+      const g = this.ring[this.ring.length < RING ? this.ring.length - 1 : this.head];
+      g.drawImage(ctx.canvas, 0, 0, S / 2, S / 2);
+      if (this.ring.length === RING) this.head = (this.head + 1) % RING;
+    }
+    ctx.restore();
+    this.note(doFlash, inv, doBeam, doSpot, doLeak, doVig, !!trail, doGel);
+  }
+
+  // the effects at work, for the toolbar
+  note(flash, inv, beam, spot, leak, vig, trails, gel) {
+    this.active = [flash && 'flash', this.strobe > 0 && 'strobe', inv && 'invert', this.punch > 0.02 && 'punch', this.split > 0.05 && 'split', this.mosaic > 0 && 'mosaic',
+      beam && 'beam', spot && 'spot', leak && 'leak', vig && 'vignette', this.roll >= 0 && 'roll', trails && 'trails', this.noise > 0 && 'noise',
+      this.swap > 0 && 'swap', this.freeze > 0 && 'freeze', this.rewind >= 0 && 'rewind', gel && 'gel', this.vertigo > 0.03 && 'vertigo'].filter(Boolean);
   }
 }
