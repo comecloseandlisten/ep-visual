@@ -1,7 +1,8 @@
 # ep visual <-> TouchDesigner. Runs inside TouchDesigner, not in Python: open the Textport (Alt+T) and type
 #
-#   exec(open(r'<where this file is>\ep_visual_td.py').read())
+#   exec(open(ep_td := r'<where this file is>\ep_visual_td.py').read())
 #
+# (`ep_td` tells it where it is: the procedural layer's families are in gen/ next to it)
 # (the MCP tool touchdesigner() gives the path as `setup_script`)
 # It builds a baseCOMP `ep_visual` in /project1 (rerunning replaces it):
 #   frames_in/frames_tex   the visualizer's picture, pixel for pixel: a WebSocket DAT takes the page's pixel grid
@@ -41,8 +42,10 @@ LAG_UP, LAG_DOWN = 0.03, 0.12  # seconds the Lag CHOP takes to follow a rise and
 RES = dict(outputresolution=('custom',), resolutionw=1000, resolutionh=1000)  # a Cross TOP takes its second input's size
 CRISP = dict(inputfiltertype=('nearest',))  # what moves the picture keeps its cells whole: linear smears, feedback every frame
 GEN_N = 125  # the procedural layer's grid: the page's own cells (125 -> 8 pixels each)
-# what the procedural layer can draw, as teenage_mcp.tdfx.GEN_KINDS (/ep/fx/gen/kind is the index)
-GEN_KINDS = ('rings', 'bars', 'orbit', 'lissajous', 'sparks', 'floor', 'scope')
+# what the procedural layer draws by itself; the families in gen/ add to it, and teenage_mcp.tdfx.GEN_KINDS is the whole
+# list, whose index /ep/fx/gen/kind is
+GEN_KINDS = ('rings', 'bars', 'orbit', 'lissajous', 'sparks', 'floor', 'scope', 'tunnel', 'rain', 'life', 'flow', 'wheel',
+             'blocks', 'ripple', 'bolt', 'waterfall', 'dots', 'snake')
 SPOUT = False  # send `out` as a Spout sender named ep_visual right away
 NDI = False  # send `out` as an NDI source named ep_visual right away
 
@@ -53,6 +56,7 @@ KNOBS = {'speed': (1.0, 0.0, 3.0), 'react': (1.0, 0.0, 2.0), 'size': (1.0, 0.6, 
 
 import json
 import os
+import re
 import secrets
 import urllib.parse
 
@@ -138,11 +142,28 @@ def _displace(comp, src, x, v):
     return fx
 
 
+def _families():
+    # the text of the family files (gen/*.py next to this script, in name order) and the elements they define
+    here = globals().get('ep_td')
+    folder = os.path.join(os.path.dirname(here), 'gen') if here else ''
+    if not os.path.isdir(folder):
+        _problem('no gen/ folder: run this script as exec(open(ep_td := r"...").read()) for the families of the procedural layer')
+        return '', ()
+    texts = []
+    for name in sorted(os.listdir(folder)):
+        if name.endswith('.py'):
+            with open(os.path.join(folder, name), encoding='utf-8') as f:
+                texts.append(f.read())
+    text = '\n\n' + '\n\n'.join(texts)
+    return text, tuple(re.findall(r"^@gen\('(\w+)'", text, re.M))
+
+
 def _gen(comp, src, x, v):
     # elements TouchDesigner draws itself from the music (GEN below), laid over the picture as light: added to dark
     # paper, put over light paper. The push Execute DAT cooks gen_tex every frame while the layer is up
     callbacks = _node(comp, textDAT, 'gen_callbacks', (x, -500))
-    callbacks.text = GEN.format(root=comp.path, kinds=GEN_KINDS, n=GEN_N, scale=1000 // GEN_N)
+    families, more = _families()
+    callbacks.text = GEN.format(root=comp.path, kinds=GEN_KINDS + more, n=GEN_N, scale=1000 // GEN_N) + families
     tex = _node(comp, scriptTOP, 'gen_tex', (x, -350), callbacks=callbacks.path)
     if PAPER == 'black':
         return _node(comp, compositeTOP, 'gen_fx', (x, -200), inputs=(src, tex), operand=('add', 'screen'))
@@ -255,9 +276,9 @@ def _channel(c, name):
     return ch
 
 
-def v(name, default=0.0):
+def v(name, default=0.0, raw=False):
     # (the Lag CHOP has no channels until it has cooked once: the raw value does until then)
-    ch = _channel(op(ROOT + '/smooth'), name) if name.startswith(SMOOTHED) else None
+    ch = _channel(op(ROOT + '/smooth'), name) if name.startswith(SMOOTHED) and not raw else None
     if ch is None:
         ch = _channel(op(ROOT + '/values'), name)
     if ch is None:
@@ -473,13 +494,25 @@ def onCook(scriptOp):
 GEN = '''# ep visual: the procedural layer. Elements TouchDesigner draws itself from the music, in the page's own pixel grid
 # (N cells of SCALE pixels) and the colours of the world on the canvas; /ep/fx/gen/kind says which, /ep/fx/gen/size
 # how big. Row 0 is the bottom, as TouchDesigner's textures are. The push Execute DAT cooks this while /ep/fx/gen is up.
-#   rings      a ring goes out from the middle on every beat, as strong as the kicks are (without a tempo, on the kicks)
+#   rings      a ring goes out from the middle on every beat, as strong as the kicks are
 #   bars       the ten bands as a skyline mirrored from the middle, the lows in the centre, caps falling back
 #   orbit      dots circling the middle, wider with the bass, more of them the busier the top end, with trails
 #   lissajous  a figure whose ratio comes from the key, turning with the mids, swelling with the level
-#   sparks     a burst of sparks on the off-beats while there are hats and snares (without a tempo, on those), falling
+#   sparks     a burst of sparks on the off-beats while there are hats and snares, falling
 #   floor      a perspective grid floor whose lines come one a beat
 #   scope      a trace of the ten bands as waves across the middle, each moving with its band's clock
+#   tunnel     squares rushing out of the middle, one a beat, tilting with the mids
+#   rain       cells falling in columns, a new lot every half beat, faster with the treble, more with the top end
+#   life       Conway's cells, a generation every half beat; the kicks drop new ones in
+#   flow       dots drifting along a field, faster with the bass; every bar it takes a new shape
+#   wheel      the twelve notes round a circle, each spoke as long as it sounds, the key's own doubled
+#   blocks     a rectangle cut in two every beat, the new piece lit, until it starts over
+#   ripple     two sources of waves, their crests where they meet; on every beat one of them moves
+#   bolt       a jagged line down the picture on the backbeat, while snares are heard
+#   waterfall  the ten bands as rows going up the picture, two rows every sixteenth
+#   dots       a grid of dots as big as the band under them, a wave out from the middle every beat
+#   snake      three lines walking the grid a step every sixteenth, turning on the beat
+# Without a tempo what goes by the beat goes by the hits, and at 120 bpm's pace where there are none (_tick).
 import math
 import time
 
@@ -491,15 +524,15 @@ N = {n!r}
 SCALE = {scale!r}
 _Y, _X = np.mgrid[0:N, 0:N].astype(np.float32) + 0.5
 S = dict(t=None, kind=None, rings=[], sparks=np.zeros((0, 5), np.float32), trail=np.zeros((N, N), np.float32),
-         caps=np.zeros(10, np.float32), kick=0.0, hat=0.0, count=None, half=None, kicks=0.0, hats=0.0,
+         caps=np.zeros(10, np.float32), kick=0.0, hat=0.0, count=None, half=None, kicks=0.0, hats=0.0, snares=0.0, own=dict(),
          rng=np.random.default_rng())
 MUSIC = ('level', 'bpm', 'beat/phase', 'beat/pulse', 'beat/count', 'beat/conf', 'hit/kick', 'hit/bass', 'hit/snare', 'hit/hat',
-         'drive/bass', 'high', 'busy', 'clock/bass', 'clock/mid', 'clock/treb', 'section/drop')
+         'drive/bass', 'drive/treb', 'high', 'busy', 'clock/bass', 'clock/mid', 'clock/treb', 'section/drop')
 
 
-def _v(name, default=0.0):
+def _v(name, default=0.0, raw=False):
     ep = op(ROOT + '/ep')
-    return ep.module.v(name, default) if ep is not None else default
+    return ep.module.v(name, default, raw) if ep is not None else default
 
 
 def _lit(c):
@@ -550,8 +583,8 @@ def _rings(img, m, dt, size, hot, other):
     if _locked(m):
         if S['count'] is not None and count != S['count']:
             S['rings'].append([0.0, max(0.4, strength)])
-    elif kick > S['kick'] + 0.25:  # the envelope jumped: a kick
-        S['rings'].append([0.0, kick])
+    elif _tick('ring', m):
+        S['rings'].append([0.0, max(0.5, kick)])
     S['kick'], S['count'] = kick, count
     r = np.hypot(_X - N / 2, _Y - N / 2)
     speed, reach, th = 0.6 * N / max(0.25, _beat(m)), 0.75 * N * size, 1.2 * size
@@ -613,10 +646,10 @@ def _sparks(img, m, dt, size, hot, other):
     if _locked(m):  # on the off-beats, while there are hats to hear
         burst = S['half'] is not None and half != S['half'] and half % 2 == 1 and strength > 0.3
     else:
-        burst = hat > S['hat'] + 0.25
+        burst = _tick('spark', m)
     S['half'] = half
     if burst:  # somewhere in the upper half
-        rng, n = S['rng'], int(6 + 24 * max(hat, strength))
+        rng, n = S['rng'], int(14 + 30 * max(hat, strength, 0.4))
         ang, speed = rng.uniform(0, 2 * math.pi, n), rng.uniform(0.3, 0.9, n) * N * size
         x0, y0 = rng.uniform(0.15, 0.85) * N, rng.uniform(0.45, 0.9) * N
         new = np.stack([np.full(n, x0), np.full(n, y0), speed * np.cos(ang), speed * np.sin(ang),
@@ -638,7 +671,7 @@ def _sparks(img, m, dt, size, hot, other):
 
 def _floor(img, m, dt, size, hot, other):
     horizon = N * 0.42
-    phase = m['beat/phase'] % 1.0
+    phase = m['beat/phase'] % 1.0 if _locked(m) else (0.7 * m['clock/bass']) % 1.0
     below = _Y < horizon
     light = 0.45 + 0.55 * m['beat/pulse']
     for k in range(1, 11):  # a line a beat comes towards you: far ones near the horizon, close ones at the bottom
@@ -666,14 +699,255 @@ def _scope(img, m, dt, size, hot, other):
     img += t * (hot * t + other * (1 - t))
 
 
-GENS = dict(rings=_rings, bars=_bars, orbit=_orbit, lissajous=_lissajous, sparks=_sparks, floor=_floor, scope=_scope)
+def _tick(key, m, div=1):
+    # a step, `div` to the beat as read ahead; without a tempo whenever a hit's envelope jumps, and at 120 bpm's pace
+    # if none does, so that nothing stands still in music with no beat to go by
+    own = S['own']
+    if not _locked(m):
+        hit = max(m['hit/kick'], m['hit/bass'], m['hit/snare'], m['hit/hat'])
+        jump = hit > own.get(key + '/hit', 0.0) + 0.25
+        own[key + '/hit'] = hit
+        if jump or S['t'] - own.get(key + '/at', 0.0) > 0.5 / div:
+            own[key + '/at'] = S['t']
+            return True
+        return False
+    now = int((m['beat/count'] + m['beat/phase'] % 1.0) * div)
+    last = own.get(key + '/step')  # (elements keep their own things in `own` too, under plain names)
+    own[key + '/step'] = now
+    return last is not None and now != last
+
+
+def _bands():
+    return np.clip(np.array([_v('band/%d' % k) for k in range(10)], np.float32), 0, 1)
+
+
+def _shade(img, buf, hot, other):
+    # light from a buffer: the brightest in the hot colour, what fades in the other
+    t = np.clip(buf, 0, 1)[..., None]
+    img += t * (hot * t + other * (1 - t))
+
+
+def _tunnel(img, m, dt, size, hot, other):
+    a = 0.15 * math.sin(0.4 * m['clock/mid'])
+    c, s = math.cos(a), math.sin(a)
+    x, y = _X - N / 2, _Y - N / 2
+    r = np.maximum(np.abs(c * x + s * y), np.abs(c * y - s * x))
+    phase = m['beat/phase'] % 1.0 if _locked(m) else (0.7 * m['clock/bass']) % 1.0
+    count = int(m['beat/count'])
+    light = 0.45 + 0.55 * m['beat/pulse']
+    for k in range(9):
+        rad = 2.4 * size * 1.5 ** (k + phase)
+        band = np.clip(1 - np.abs(r - rad) / (0.7 + 0.03 * rad), 0, 1)
+        img += band[..., None] * (hot if (k - count) % 2 else other) * light * min(1.0, 0.3 + 0.12 * k)
+
+
+def _rain(img, m, dt, size, hot, other):
+    own, rng = S['own'], S['rng']
+    _trail(dt, 0.3)
+    if 'y' not in own:
+        own.update(y=np.full(N, -1.0, np.float32), v=rng.uniform(0.6, 1.4, N).astype(np.float32))
+    y = own['y']
+    if _tick('rain', m, 2) or not (y > 0).any():
+        n = 4 + int(24 * min(1.0, 6 * m['busy'] + m['high']))
+        cols = rng.choice(N // 2, n, replace=False) * 2
+        y[cols] = N - 1
+    on = y > 0
+    y[on] -= dt * N * (0.5 + 1.2 * m['drive/treb']) * own['v'][on]
+    keep = y > 0
+    _plot(S['trail'], np.nonzero(keep)[0].astype(np.float32), y[keep], np.float32(1.0))
+    _shade(img, S['trail'], hot, other)
+
+
+def _life(img, m, dt, size, hot, other):
+    own, rng = S['own'], S['rng']
+    g = N // 2
+    if 'cells' not in own:
+        own.update(cells=rng.random((g, g)) < 0.08, age=np.zeros((g, g), np.float32))
+    cells = own['cells']
+    if _tick('seed', m):  # new ones where they can catch, more of them the harder the kicks
+        for _ in range(1 + int(3 * _recent('kicks', m['hit/kick'], m, dt))):
+            x, y = rng.integers(0, g - 8, 2)
+            cells[y:y + 8, x:x + 8] |= rng.random((8, 8)) < 0.45
+    if _tick('life', m, 2):
+        n = sum(np.roll(np.roll(cells, a, 0), b, 1).astype(np.uint8) for a in (-1, 0, 1) for b in (-1, 0, 1) if a or b)
+        own['cells'] = cells = (n == 3) | (cells & (n == 2))
+    own['age'] = np.maximum(own['age'] * math.exp(-dt / 0.35), cells)
+    buf = np.zeros((N, N), np.float32)
+    buf[:2 * g, :2 * g] = own['age'].repeat(2, 0).repeat(2, 1)
+    _shade(img, buf, hot, other)
+
+
+def _flow(img, m, dt, size, hot, other):
+    own, rng = S['own'], S['rng']
+    _trail(dt, 0.3)
+    if 'p' not in own:
+        own.update(p=rng.uniform(0, N, (220, 2)).astype(np.float32), shape=0.0)
+    if _tick('flow', m, 0.25):  # a new field every bar
+        own['shape'] = float(rng.uniform(0, 6.28))
+    p, s = own['p'], own['shape']
+    ang = 2.6 * np.sin(p[:, 0] * 0.05 / size + s) + 2.6 * np.cos(p[:, 1] * 0.06 / size - s) + 0.3 * m['clock/mid']
+    speed = N * (0.12 + 0.5 * m['drive/bass'])
+    p[:, 0] = (p[:, 0] + dt * speed * np.cos(ang)) % N
+    p[:, 1] = (p[:, 1] + dt * speed * np.sin(ang)) % N
+    _plot(S['trail'], p[:, 0], p[:, 1], np.float32(0.5 + 0.5 * m['beat/pulse']))
+    _shade(img, S['trail'], hot, other)
+
+
+def _wheel(img, m, dt, size, hot, other):
+    c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
+    c = c / max(float(c.max()), 1e-3)
+    root = int(_v('key/root', -1))
+    ang = 2 * math.pi * np.arange(12, dtype=np.float32) / 12 + 0.15 * m['clock/mid']
+    r0 = N * 0.11 * size * (1 + 0.25 * m['beat/pulse'])
+    tip = r0 + N * 0.3 * size * c * (0.5 + 0.5 * m['level'])
+    t = np.linspace(0, 1, 40, dtype=np.float32)[:, None]
+    buf = np.zeros((N, N), np.float32)
+    rad = r0 + (tip - r0) * t  # the spokes, as long as each note sounds
+    _plot(buf, N / 2 + rad * np.cos(ang), N / 2 + rad * np.sin(ang), np.broadcast_to(0.3 + 0.7 * c, rad.shape))
+    nxt = np.roll(tip, -1)  # the ring through their tips
+    step = 2 * math.pi / 12
+    rim = tip + (nxt - tip) * t
+    _plot(buf, N / 2 + rim * np.cos(ang + step * t), N / 2 + rim * np.sin(ang + step * t), np.float32(0.35))
+    if root >= 0:  # the key's own note, doubled
+        _plot(buf, N / 2 + 1 + rad[:, root] * math.cos(ang[root]), N / 2 + rad[:, root] * math.sin(ang[root]), np.float32(1.0))
+    _shade(img, buf, hot, other)
+
+
+def _blocks(img, m, dt, size, hot, other):
+    own, rng = S['own'], S['rng']
+    if 'r' not in own:
+        own['r'] = [[3, 3, N - 3, N - 3, 0.0]]
+    r = own['r']
+    if _tick('blocks', m):  # the biggest piece splits in two; when they are small the picture starts over
+        big = max(r, key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
+        x0, y0, x1, y1, _ = big
+        w, h = x1 - x0, y1 - y0
+        if len(r) >= 20 or max(w, h) < 12:
+            r[:] = [[3, 3, N - 3, N - 3, 0.0]]
+        else:
+            k = float(rng.uniform(0.35, 0.65))
+            if w > h:
+                c = x0 + int(w * k)
+                big[2] = c
+                r.append([c, y0, x1, y1, 1.0])
+            else:
+                c = y0 + int(h * k)
+                big[3] = c
+                r.append([x0, c, x1, y1, 1.0])
+    fade = math.exp(-dt / 0.3)
+    light = 0.4 + 0.5 * m['beat/pulse']
+    for b in r:
+        x0, y0, x1, y1, fill = b
+        img[y0:y1, x0:x1] += other * 0.45 * fill
+        img[y0, x0:x1] += hot * light
+        img[y1 - 1, x0:x1] += hot * light
+        img[y0:y1, x0] += hot * light
+        img[y0:y1, x1 - 1] += hot * light
+        b[4] = fill * fade
+
+
+def _ripple(img, m, dt, size, hot, other):
+    own, rng = S['own'], S['rng']
+    if 'at' not in own:
+        own['at'] = rng.uniform(0.2 * N, 0.8 * N, (2, 2)).astype(np.float32)
+        own['who'] = 0
+    if _tick('ripple', m):
+        own['who'] = 1 - own['who']
+        own['at'][own['who']] = rng.uniform(0.2 * N, 0.8 * N, 2)
+    (x1, y1), (x2, y2) = own['at']
+    f, t = 0.42 / size, 4 * m['clock/bass']
+    w = np.sin(np.hypot(_X - x1, _Y - y1) * f - t) + np.sin(np.hypot(_X - x2, _Y - y2) * f - t)
+    _shade(img, np.clip(w - 1.1, 0, 0.9) * (0.7 + 0.6 * m['beat/pulse']) * 1.2, hot, other)
+
+
+def _bolt(img, m, dt, size, hot, other):
+    own, rng = S['own'], S['rng']
+    bolts = own.setdefault('bolts', [])
+    snare = max(m['hit/snare'], 0.7 * m['hit/hat'])
+    strength = _recent('snares', snare, m, dt)
+    if _locked(m):  # on the backbeat, while snares are heard
+        fire = _tick('bolt', m) and int(m['beat/count']) % 2 == 1 and strength > 0.3
+    else:
+        fire = _tick('bolt', m, 0.5)
+    own['snare'] = snare
+    if fire:
+        ys = np.arange(N, dtype=np.float32)
+        xs = rng.uniform(0.2, 0.8) * N + np.cumsum(rng.normal(0, 1.6 * size, N)).astype(np.float32)
+        bolts.append([xs, ys, 0.3, max(strength, snare, 0.5)])
+    buf = np.zeros((N, N), np.float32)
+    for b in bolts:
+        b[2] -= dt
+        a = np.float32(b[3] * max(0.0, b[2]) / 0.3 * 1.6)
+        _plot(buf, b[0], b[1], a)
+        _plot(buf, b[0] + 1, b[1], a * np.float32(0.5))
+    own['bolts'] = [b for b in bolts if b[2] > 0][-4:]
+    _shade(img, buf, hot, other)
+
+
+def _waterfall(img, m, dt, size, hot, other):
+    own = S['own']
+    if 'rows' not in own:
+        own.update(rows=np.zeros((N, 10), np.float32), wait=0.0)
+    own['wait'] += dt
+    if _tick('fall', m, 4) if _locked(m) else own['wait'] > 0.12:  # two rows every sixteenth
+        own['wait'] = 0.0
+        own['rows'] = np.roll(own['rows'], 2, 0)
+        own['rows'][:2] = _bands() ** 1.5
+    w = N / 20.0
+    col = np.minimum(19, (_X[0] / w).astype(int))
+    _shade(img, own['rows'][:, np.where(col < 10, 9 - col, col - 10)], hot, other)
+
+
+def _dots(img, m, dt, size, hot, other):
+    b = _bands()
+    step = max(6.0, 10 * size)
+    d = np.hypot(_X % step - step / 2, _Y % step - step / 2)
+    level = b[np.minimum(9, (_X / N * 10).astype(int))]
+    phase = m['beat/phase'] % 1.0
+    wave = np.exp(-(np.hypot(_X - N / 2, _Y - N / 2) / (0.7 * N) - phase) ** 2 / 0.02)  # out from the middle, once a beat
+    _shade(img, np.clip(step * 0.42 * (0.15 + 0.6 * level + 0.5 * wave) - d + 0.5, 0, 1) * (0.5 + 0.5 * level + 0.4 * wave), hot, other)
+
+
+def _snake(img, m, dt, size, hot, other):
+    own, rng = S['own'], S['rng']
+    _trail(dt, 1.2)
+    if 'h' not in own:
+        own['h'] = [[int(x), int(y), dx, dy] for (x, y), (dx, dy) in
+                    zip(rng.integers(N // 4, 3 * N // 4, (3, 2)), ((1, 0), (0, 1), (-1, 0)))]
+    turn = _tick('turn', m)
+    if _tick('walk', m, 4):
+        for h in own['h']:
+            if turn and rng.random() < 0.7:  # a quarter turn, on the beat
+                side = 1 if rng.random() < 0.5 else -1
+                h[2], h[3] = -side * h[3], side * h[2]
+            xs, ys = [], []
+            for _ in range(max(2, int(3 * size))):
+                h[0], h[1] = (h[0] + h[2]) % N, (h[1] + h[3]) % N
+                xs.append(h[0])
+                ys.append(h[1])
+            S['trail'][ys, xs] = 1.0
+    _shade(img, S['trail'], hot, other)
+
+
+def gen(name, *moods, whole=False):
+    # an element of a family file (gen/*.py). The moods it suits, 'drop' among them, and `whole` (it covers the frame, so
+    # geometric pictures only) are read by the visualizer's Director (teenage_mcp.tdfx) straight from the file
+    def add(draw):
+        GENS[name] = draw
+        return draw
+    return add
+
+
+GENS = dict(rings=_rings, bars=_bars, orbit=_orbit, lissajous=_lissajous, sparks=_sparks, floor=_floor, scope=_scope,
+            tunnel=_tunnel, rain=_rain, life=_life, flow=_flow, wheel=_wheel, blocks=_blocks, ripple=_ripple, bolt=_bolt,
+            waterfall=_waterfall, dots=_dots, snake=_snake)
 
 
 def draw(dt):
     # the layer as an N x N x 4 float picture (light, and its alpha)
-    kind = KINDS[int(round(_v('fx/gen/kind'))) % len(KINDS)]
+    kind = KINDS[int(round(_v('fx/gen/kind', raw=True))) % len(KINDS)]  # (eased, it would pass through the ones between)
     if kind != S['kind']:  # another element: it starts from nothing
-        S.update(kind=kind, rings=[], sparks=np.zeros((0, 5), np.float32), caps=np.zeros(10, np.float32))
+        S.update(kind=kind, rings=[], sparks=np.zeros((0, 5), np.float32), caps=np.zeros(10, np.float32), own=dict())
         S['trail'][:] = 0
     m = dict((name, _v(name)) for name in MUSIC)
     img = np.zeros((N, N, 3), np.float32)
@@ -946,8 +1220,8 @@ def build(parent=None):
 NOTES = """ep visual <-> TouchDesigner
 
 the picture: source -> displace -> gen -> mirror -> feedback -> rgbsplit -> edge -> blur -> tint -> bloom -> hue -> strobe -> out
-  gen is the procedural layer: gen_tex (a Script TOP, gen_callbacks) draws one of rings, bars, orbit, lissajous,
-  sparks, floor, scope (/ep/fx/gen/kind) from the music in the page's pixel grid and the style's colours; the
+  gen is the procedural layer: gen_tex (a Script TOP, gen_callbacks) draws one of its elements (GEN_KINDS, listed at
+  the top of gen_callbacks; /ep/fx/gen/kind) from the music in the page's pixel grid and the style's colours; the
   visualizer's Director brings one in now and then on a new part or a drop, for a few bars
   tint looks each pixel's luminance up in tint_ramp, the style's palette dark to light (push keeps tint_keys current)
   smooth: the values through a Lag CHOP; v() reads the effect settings and levels from it, hits and beats raw

@@ -23,14 +23,18 @@ The README is for people. This file is the technical map.
 
 ## TouchDesigner
 
-`td/ep_visual_td.py` runs inside TouchDesigner (Textport: `exec(open(r'<path>\ep_visual_td.py').read())`) and
+`td/ep_visual_td.py` runs inside TouchDesigner (Textport: `exec(open(ep_td := r'<path>\ep_visual_td.py').read())`, `ep_td`
+telling it where `gen/` is) and
 builds `/project1/ep_visual`. The page's pixel grid comes in through a WebSocket DAT and a Script TOP, with
 `td.html` in a Web Render TOP as the fallback. It then runs through a chain of Cross TOPs: displace, gen, mirror,
 feedback, rgbsplit, edge, blur, tint, bloom, hue, strobe. The result lands in `out`, and from there goes to Spout,
 NDI, a window or a movie file.
 
-`gen` is TouchDesigner's own procedural layer. A Script TOP draws one of rings, bars, orbit, lissajous, sparks,
-floor or scope from the music, in the page's 125 grid and the style's palette.
+`gen` is TouchDesigner's own procedural layer: a Script TOP draws elements from the music, in the page's 125 grid and the
+style's palette. There are 180: 18 in the setup script and 18 in each family of `td/gen/` (cells, physics, geometry,
+signal, demo, nature, tech, op, bio). `td/gen/README.md` is the contract for writing one; each carries its moods and
+whether it covers the frame, which is what the Director picks by. The stand it names, `tools/gen_sheet.py`, stays in the
+private project: it needs that project's fake TouchDesigner.
 
 The readings arrive as OSC on 7000 (values) and 7001 (events), and control goes back on 7002. A WebServer DAT on
 9980 serves `/exec`, `/frame.jpg` and the `out` stream. The `notes` DAT it builds lists every address. What turns
