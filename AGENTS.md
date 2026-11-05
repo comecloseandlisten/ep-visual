@@ -40,6 +40,11 @@ The readings arrive as OSC on 7000 (values) and 7001 (events), and control goes 
 9980 serves `/exec`, `/frame.jpg` and the `out` stream. The `notes` DAT it builds lists every address. What turns
 the effects on (`/ep/fx/<effect>`, `/ep/fx/gen/kind`) comes from the server's Director, which picks by mood, style,
 sections and drops. Without the server everything stays at 0 unless it is set by hand in TouchDesigner.
+
+The Director also keeps a budget of noise. The page measures the world on the canvas (`scene/detail`, `scene/motion`, in
+`Touch.look`) and sends the groove's `groove/budget`; what that leaves is `noise/room`. An element has to weigh less than
+the room (`td/gen/weights.json`), and the loud effects and the element are turned down together to fit it, so a crowded
+world or a breakdown gets a thin line or nothing, and a bare one can take a lot.
 `API_VERSION` has to match the server's.
 
 ## Content rule

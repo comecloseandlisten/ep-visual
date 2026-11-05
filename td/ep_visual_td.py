@@ -1247,7 +1247,8 @@ values (OSC In CHOP, port {v}), ~30 Hz, one float each; in expressions op('ep').
   /ep/section/change /ep/section/drop                         1 on a new part / a drop, decay ~1 s
   /ep/mood/valence /ep/mood/arousal /ep/mood/col /ep/mood/row
   /ep/key/root (0..11, -1 none) /ep/key/major
-  /ep/scene/index /ep/scene/mix /ep/scene/time /ep/scene/geo /ep/ink /ep/idle
+  /ep/scene/index /ep/scene/mix /ep/scene/time /ep/scene/geo /ep/scene/detail /ep/scene/motion /ep/ink /ep/idle
+  /ep/groove/budget /ep/noise/room              how much the picture can take, what the Director has left to lay over it
   /ep/palette/0..7/r g b                        the current style's colours 0..1
   /ep/fx/<effect> /ep/fx/<effect>/<param>       the effect settings
   /ep/world/<knob>                              the knobs inside the worlds, as set (speed react size zoom panx

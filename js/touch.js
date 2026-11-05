@@ -56,6 +56,10 @@ export class Touch {
     this.sentAt = new Float64Array(256);
     this.tripSeq = -1;
     this.lag = 0; // seconds the way round through TouchDesigner takes
+    this.detail = 0; // how noisy the world on the canvas is (look())
+    this.motion = 0;
+    this.looks = 0;
+    this.seen = null;
     this.kickAt = -1;
     this.tdError = '';
     this.pulling = false;
@@ -136,6 +140,25 @@ export class Touch {
   }
 
   // the pixel grid as drawn this frame, alpha 0 where the paper is bare, so td.html can lay it on its own paper
+  // How much is going on in the world on the canvas, for the Director to go by when it lays things over it, every few
+  // frames: the share of neighbouring cells that differ (a world's load in tools/profile_scenes.mjs) and of the cells that
+  // changed, both over about a second.
+  look(buf, N) {
+    if (!this.speaking || ++this.looks % 4) return;
+    const seen = this.seen?.length === buf.length ? this.seen : null;
+    let cells = 0, edges = 0, moved = 0;
+    for (let y = 0; y < N - 1; y += 2)
+      for (let x = 0, i = y * N; x < N - 1; x += 2, i += 2) {
+        cells++;
+        if (buf[i] !== buf[i + 1] || buf[i] !== buf[i + N]) edges++;
+        if (seen && buf[i] !== seen[i]) moved++;
+      }
+    this.seen = seen || new Uint8Array(buf.length);
+    this.seen.set(buf);
+    this.detail += (edges / cells - this.detail) * 0.12;
+    this.motion += (moved / cells - this.motion) * 0.12;
+  }
+
   sendFrame(N, data, vis) {
     if (!this.speaking || this.ws.bufferedAmount > 1 << 18) return;
     const buf = new ArrayBuffer(4 + N * N * 4), head = new DataView(buf);
@@ -284,6 +307,7 @@ export class Touch {
       'key/root': f.key ? f.key.root : -1, 'key/major': f.key?.mode === 'maj' ? 1 : 0,
       'scene/index': this.keys.indexOf(sc.name), 'scene/mix': st.prev ? st.mix : 1, 'scene/time': st.sceneTime,
       'scene/geo': sceneGeo(sc) && (!st.prev || sceneGeo(st.prev)) ? 1 : 0,
+      'scene/detail': this.detail, 'scene/motion': this.motion, 'groove/budget': f.groove?.budget ?? 1,
       ink: st.ink, idle: st.idle ? 1 : 0, hit: this.hits[''].at(now),
     };
     for (const n of ['bass', 'mid', 'treb']) {

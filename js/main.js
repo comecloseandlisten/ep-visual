@@ -932,6 +932,7 @@ function draw(dt, f) {
   st.ink = shown / (N * N);
   // to TouchDesigner as painted, without the light show: it lays its own effects over it (its strobe, its bloom),
   // and while its result is on the canvas the page's light would only be drawn over, so it rests
+  touch.look(cur.raster.buf, N);
   touch.sendFrame(N, img.data, vis);
   if (light.on && !st.idle && !touch.showing) light.apply(img.data, N, N / 125, st.ink);
   smallCtx.putImageData(img, 0, 0);

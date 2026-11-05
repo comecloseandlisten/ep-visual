@@ -40,3 +40,5 @@ Rules:
 - No full-frame flashes: light moves or grows, and a flash of the whole frame comes at most 3 times a second.
 - It goes on moving in music with neither tempo nor hits, and costs under 4 ms a frame: vectorise, no Python loops over cells.
 - `python tools/gen_sheet.py <family> sheet.png` runs these checks and draws a contact sheet.
+- `weights.json` ranks every element by how much of a picture it takes up, 0..1, for the Director's noise budget. After
+  adding elements, `python tools/gen_sheet.py weights` writes it again.
