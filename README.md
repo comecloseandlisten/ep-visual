@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/banner.svg" alt="ep·visual: a pixel canvas next to its panel with the mood, a valence × arousal map and the pads" width="100%">
+  <img src="docs/banner.svg" alt="ep·visual: the pixel picture to the edges, with the dock, the pads and the mood with its valence × arousal map floating over it" width="100%">
 </p>
 
 <p align="center">
