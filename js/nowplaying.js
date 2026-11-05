@@ -3,12 +3,14 @@
 // (genre tags, tempo, key, a mood, what it is about). This shows the track, hands the hints to the listener, the
 // mood and the meaning (meaning.js), and can make the page listen to the computer's own output.
 import { setMeaning } from './meaning.js';
+import { Tap } from './analysis.js';
 
 const NOTE_INDEX = { C: 0, 'C#': 1, DB: 1, D: 2, 'D#': 3, EB: 3, E: 4, F: 5, 'F#': 6, GB: 6, G: 7, 'G#': 8, AB: 8, A: 9, 'A#': 10, BB: 10, B: 11 };
 // inputs that carry the computer's own output: Windows' Stereo Mix, virtual cables, PulseAudio monitors
 export const LOOPBACK = /stereo mix|loopback|what u hear|cable output|voicemeeter|blackhole|soundflower|monitor of/i;
 const MOOD_W = 0.4; // how far the track's mood pulls the page's own reading while it plays
 const DESCRIBE_WAIT = 6; // seconds a new track's picture waits for its description
+const FRAME_MIDDLE = 0.012; // s: an analysis frame is centred this far back from the newest sample it reads, the block's way included (tools/sync_check.py)
 
 // 'F minor', 'Gm', 'A# major', 'Db' -> { root, mode, name }
 export function parseKey(text) {
@@ -45,7 +47,7 @@ export class NowPlaying {
       this.ctx.newTrack(ev);
     }
     // the track's own clock, for its beat grid; a seek comes as an event of the same track with a new start
-    this.ctx.timeline?.(this.playing && ev.start_at ? ev.start_at : null);
+    this.ctx.timeline?.(this.playing && ev.start_at ? ev.start_at : null, ev.duration_s);
     if (fresh && !ev.hints) {
       this.waiting = ev.id;
       clearTimeout(this.waitT);
@@ -147,10 +149,12 @@ export class NowPlaying {
     // -16 dBFS, where the onset detector and the mood were calibrated (the gain slider still applies on top)
     const agc = actx.createGain();
     agc.connect(dest);
-    let next = 0, rmsAvg = 0, lead = 0.06;
-    // `lag`: how long after the server captured it the page hears the sound (the block, then the lead it is played
-    // with), which the track's beat grid needs to know where the player's clock is
-    this.feed = { agc, get gain() { return agc.gain.value; }, get lag() { return lead + 0.025; } };
+    let next = 0, rmsAvg = 0, makeup = 1;
+    // the listener hears it from the tap, as it arrives; the audio graph still gets it, for the recorder and the meters
+    const tap = (ctx.listener.tap = new Tap(rate));
+    // `lag`: how long after the sound card the listener hears the sound (measured: tools/sync_check.py), which the beat
+    // and the track's grid need to know where the room is
+    this.feed = { agc, tap, get gain() { return makeup; }, get lag() { return tap.age + FRAME_MIDDLE; } };
     const play = async (reader) => {
       let pending = new Uint8Array(0);
       for (;;) {
@@ -160,29 +164,34 @@ export class NowPlaying {
         if (pending.length) { bytes = new Uint8Array(pending.length + value.length); bytes.set(pending); bytes.set(value, pending.length); }
         const frameBytes = 2 * ch, frames = Math.floor(bytes.length / frameBytes);
         pending = bytes.slice(frames * frameBytes);
-        if (!frames || actx.state !== 'running') continue;
-        const now = actx.currentTime;
-        // the server's sound card and this page's run on clocks of their own, and every hiccup primes the lead
-        // anew: a block that would land more than 0.15 s late is dropped rather than letting the picture fall
-        // further and further behind the music
-        if (next > now + 0.15) continue;
+        if (!frames) continue;
         const view = new DataView(bytes.buffer, bytes.byteOffset, frames * frameBytes);
-        const buf = actx.createBuffer(ch, frames, rate);
+        const pcm = Array.from({ length: ch }, () => new Float32Array(frames)), mono = new Float32Array(frames);
         let sq = 0;
         for (let c = 0; c < ch; c++) {
-          const out = buf.getChannelData(c);
-          for (let i = 0; i < frames; i++) { const v = view.getInt16((i * ch + c) * 2, true) / 32768; out[i] = v; sq += v * v; }
+          const out = pcm[c];
+          for (let i = 0; i < frames; i++) { const v = view.getInt16((i * ch + c) * 2, true) / 32768; out[i] = v; mono[i] += v / ch; sq += v * v; }
         }
         const rms = Math.sqrt(sq / (frames * ch));
         if (rms > 1e-4) {
           rmsAvg += (rms - rmsAvg) * Math.min(1, frames / rate / 1.5);
-          agc.gain.setTargetAtTime(Math.min(12, Math.max(1, 0.16 / Math.max(rmsAvg, 1e-3))), now, 0.5);
+          makeup += (Math.min(12, Math.max(1, 0.16 / Math.max(rmsAvg, 1e-3))) - makeup) * Math.min(1, frames / rate / 0.5);
         }
+        tap.gain = makeup * ctx.lineGain.gain.value;
+        tap.push(mono, frames, performance.now() / 1000);
+        if (actx.state !== 'running') continue;
+        const now = actx.currentTime;
+        // the server's sound card and this page's run on clocks of their own, and every hiccup primes the lead
+        // anew: a block that would land more than 0.15 s late is dropped rather than letting it fall further and
+        // further behind the music
+        if (next > now + 0.15) continue;
+        agc.gain.setTargetAtTime(makeup, now, 0.05);
+        const buf = actx.createBuffer(ch, frames, rate);
+        pcm.forEach((out, c) => buf.copyToChannel(out, c));
         const src = actx.createBufferSource();
         src.buffer = buf;
         src.connect(agc);
         if (next < now + 0.01) next = now + 0.06; // (re)prime with a small lead against network jitter
-        lead += (next - now - lead) * 0.05;
         src.start(next);
         next += frames / rate;
       }
@@ -204,6 +213,7 @@ export class NowPlaying {
           if (res) ctx.status(`line in · ${label}`);
         }
       } finally {
+        if (ctx.listener.tap === tap) ctx.listener.tap = null;
         dest.stream.getTracks().forEach((t) => t.stop());
       }
     })();

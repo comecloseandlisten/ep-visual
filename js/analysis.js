@@ -265,6 +265,90 @@ export function tempoScores(env, rate, out, w = 1) {
   return true;
 }
 
+// The sound as it arrives, for a Listener to hear at once, in place of its AnalyserNodes: what the server's loopback sends
+// would otherwise be played into the audio graph with a lead against jitter and come out of a stream node, a tenth of a
+// second after the sound card. Here it goes into a ring, and each frame reads the ring where the clock says, a hair behind
+// the newest sample, so that frames see the music move evenly although it arrives in blocks.
+export class Tap {
+  constructor(rate, cushion = 0.014) {
+    this.rate = rate;
+    this.cushion = cushion;
+    this.ring = new Float32Array(1 << 15);
+    this.n = 0; // samples so far
+    this.pos = 0; // where the frame reads up to
+    this.base = null; // the moment sample 0 would have arrived
+    this.at = -1e9;
+    this.age = cushion; // s the newest sample read has been here, smoothed: the cushion, less if the sound comes late
+    this.gain = 1;
+    this.fast = this.analyser(1024);
+    this.slow = this.analyser(8192);
+  }
+
+  // samples that arrived at `t` (s). The earliest any block ever came is the nearest to when it was made, so the clock is
+  // laid along that, let creep (the two ends' clocks drift apart) and laid anew after a gap in the sound
+  push(x, count, t) {
+    const mask = this.ring.length - 1;
+    for (let i = 0; i < count; i++) this.ring[(this.n + i) & mask] = x[i];
+    this.n += count;
+    const base = t - this.n / this.rate;
+    if (this.base === null || base < this.base || base - this.base > 0.05) this.base = base;
+    else this.base += 0.001 * (count / this.rate);
+    this.at = t;
+  }
+
+  // the frame at `now` reads up to here; false when no sound is coming
+  seek(now) {
+    if (now - this.at > 0.25) return false;
+    this.pos = Math.min(this.n, Math.floor((now - this.cushion - this.base) * this.rate));
+    this.age += (now - this.base - this.pos / this.rate - this.age) * 0.02;
+    return true;
+  }
+
+  // an AnalyserNode as the Web Audio spec has it: Blackman window, |X| / N in dB, no smoothing
+  analyser(N) {
+    const win = Float32Array.from({ length: N }, (_, i) => 0.42 - 0.5 * Math.cos((2 * Math.PI * i) / N) + 0.08 * Math.cos((4 * Math.PI * i) / N));
+    const re = new Float32Array(N), im = new Float32Array(N), mask = this.ring.length - 1;
+    return {
+      fftSize: N,
+      frequencyBinCount: N / 2,
+      getFloatTimeDomainData: (out) => {
+        for (let i = 0; i < N; i++) out[i] = this.ring[(this.pos - N + i) & mask] * this.gain;
+      },
+      getFloatFrequencyData: (out) => {
+        for (let i = 0; i < N; i++) { re[i] = this.ring[(this.pos - N + i) & mask] * this.gain * win[i]; im[i] = 0; }
+        fft(re, im);
+        for (let k = 0; k < N / 2; k++) out[k] = 20 * Math.log10(Math.hypot(re[k], im[k]) / N);
+      },
+    };
+  }
+}
+
+// what an onset sounds like it is, by where its energy went
+export function classifyOnset(o, f) {
+  if (f.tonal > 0.55) {
+    let pc = 0;
+    for (let i = 1; i < 12; i++) if (f.frameChroma[i] > f.frameChroma[pc]) pc = i;
+    return { kind: f.bands.sub + f.bands.low > 0.5 ? 'bass' : 'keys', pc };
+  }
+  if (o.high > o.mid * 1.5 && o.high > o.low) return { kind: 'hat', pc: -1 };
+  if (o.low > o.mid * 4) return { kind: 'kick', pc: -1 };
+  if (o.mid + o.high > o.low * 0.5) return { kind: 'snare', pc: -1 };
+  return { kind: 'perc', pc: -1 };
+}
+
+const FOLD = 64, GLANCE = 24; // bins in a beat of the long fold and the short one
+const FOLD_HALF_LIFE = 8; // s: what the long fold remembers
+
+// what's heard goes into every bin passed since the last frame, so none goes stale at low frame rates; returns the bin now
+function fill(R, pos, last, v, keep) {
+  const B = R.length, bin = Math.floor(pos * B);
+  for (let i = last < 0 ? bin : (last + 1) % B, guard = 0; guard < B; i = (i + 1) % B, guard++) {
+    R[i] = R[i] * keep + v * (1 - keep);
+    if (i === bin) break;
+  }
+  return bin;
+}
+
 export class Listener {
   constructor(ctx, input) {
     this.fast = ctx.createAnalyser();
@@ -307,7 +391,7 @@ export class Listener {
     this.rel = ['bass', 'mid', 'treb'].map((name, i) => ({ name, bins: bins(...[[20, 320], [320, 2800], [2800, 11025]][i]),
       avg: 0, long: 0, clock: 0 }));
     this.frames = 0;
-    this.beat = { T: 0, R: null, lastBin: -1, phase: 0, prev: 0, pulse: 0, count: 0, conf: 0 };
+    this.beat = { T: 0, R: null, phase: 0, prev: 0, pulse: 0, count: 0, conf: 0, clear: 0 };
     this.sect = { acc: null, n: 0, vecs: [], nov: [], since: 0, lowRun: 0 };
     this.ext = null; // a jam's clock: { beat, bpm, T, at }
     // what is known about the playing track (from its description): { bpm, key: { root, mode } }. The tempo
@@ -336,6 +420,11 @@ export class Listener {
     this.lock = bpm > 0 && (hf ? Math.abs(bpm - hf) / hf < 0.02 && beats >= 32 : beats >= 96) ? bpm : 0;
   }
 
+  // A new track's beat owes nothing to the last one's: the fold starts over, on the same tempo until it hears another.
+  newTrack() {
+    this.beat.R = null;
+  }
+
   // The bar lines move to where the music has its own (the groove's squares say where): the beat count goes on by
   // `n` beats, never back. A jam's clock knows its bar lines already. Says whether it moved.
   shiftBeats(n, now) {
@@ -345,7 +434,7 @@ export class Listener {
   }
 
   update(now, dt) {
-    const { fast, slow } = this;
+    const { fast, slow } = this.tap?.seek(now) ? this.tap : this;
     fast.getFloatTimeDomainData(this.wave);
     fast.getFloatFrequencyData(this.dbFast);
     slow.getFloatFrequencyData(this.dbSlow);
@@ -358,12 +447,12 @@ export class Listener {
 
     // onset detection: log-magnitude spectral flux on the short window; on the way, the power of the bass and of
     // the top end, quick enough for the groove to hear a pit or a drop on the frame
-    let flux = 0, fluxLow = 0, fluxHigh = 0, fluxMid = 0, powLow = 0, powHigh = 0;
+    let flux = 0, fluxLow = 0, fluxHigh = 0, fluxMid = 0, powLow = 0, powMid = 0, powHigh = 0;
     for (let k = 1; k < this.dbFast.length; k++) {
       const amp = Math.pow(10, this.dbFast[k] / 20), mag = Math.log1p(100 * amp);
       const d = mag - this.prevMag[k], f = k * this.hzFast;
       this.prevMag[k] = mag;
-      if (f < 160) powLow += amp * amp; else if (f >= 4000) powHigh += amp * amp;
+      if (f < 160) powLow += amp * amp; else if (f >= 4000) powHigh += amp * amp; else if (f >= 300 && f < 2500) powMid += amp * amp;
       if (d > 0) {
         flux += d;
         if (f < 200) fluxLow += d; else if (f < 4000) fluxMid += d; else fluxHigh += d;
@@ -433,7 +522,13 @@ export class Listener {
     const onsetRate = this.onsetTimes.filter((t) => now - t < 4).length / 4;
 
     const rel = this.relativeBands(dt, level);
-    const beat = ext ? this.followClock(now, dt, ext) : this.trackBeat(now, dt, Math.max(0, odf - mean));
+    const lowAmp = Math.sqrt(powLow), lowRise = Math.max(0, lowAmp - (this.prevLow || 0));
+    const midAmp = Math.sqrt(powMid), midRise = Math.max(0, midAmp - (this.prevMid || 0));
+    this.prevLow = lowAmp;
+    this.prevMid = midAmp;
+    this.lowTop = Math.max(lowAmp, (this.lowTop || 0) * Math.exp(-dt / 20));
+    this.midTop = Math.max(midAmp, (this.midTop || 0) * Math.exp(-dt / 20));
+    const beat = ext ? this.followClock(now, dt, ext) : this.trackBeat(now, dt, lowRise / (this.lowTop + 1e-9) + midRise / (this.midTop + 1e-9), Math.max(0, odf - mean));
     const section = beat.on ? this.trackSections(now, rel, onsetRate, shape.bright) : null;
 
     this.f = {
@@ -475,40 +570,63 @@ export class Listener {
     return out;
   }
 
-  // Beat phase after Scheirer: fold the onset envelope onto the tempo period and let it build up; the peak of the
-  // fold is where beats fall. A free-running phase is pulled softly toward it, so it stays steady through fills.
-  trackBeat(now, dt, odf) {
-    const b = this.beat, B = 24;
+  // Beat phase after Scheirer: fold the music's rises onto the tempo period and let them build up; the fold's line is
+  // where beats fall. `rise` is the low end's and the mids' together: a kick has both, a bass note only the one and a
+  // hat neither. The line is the highest place counting the half beat too (a kick's line has its snare half a beat on, a
+  // rolling bass's sixteenth does not), and it stays where it is until another clearly beats it for a while, so a fill
+  // or a new bass line doesn't move the beat. The phase runs on its own and only leans towards the line, a little faster
+  // or slower, never back: no beat is lost or told twice, and what the fold finds is a slide, not a jump.
+  // `conf` is the last few seconds' say on how much of what's heard stands on a beat (`odf`, its own short fold); `clear`
+  // the long fold's: conf falls in a breakdown while clear remembers the beat.
+  trackBeat(now, dt, rise, odf) {
+    const b = this.beat;
     b.on = b.tick = false;
-    if (!this.bpm) { b.conf = Math.max(0, b.conf - dt); b.pulse *= Math.exp(-dt / 0.15); return b; }
+    if (!this.bpm) { b.conf = Math.max(0, b.conf - dt); b.clear = 0; b.pulse *= Math.exp(-dt / 0.15); return b; }
     const T = 60 / this.bpm;
     // the fold counts from `ref`, moved along with any change of tempo so that where now falls in the fold stays put:
     // a small change keeps what was built up, as it must, the estimate settling by a tenth of a BPM at a time
-    if (!b.R || Math.abs(T - b.T) / T > 0.03) { b.T = T; b.ref = now; b.R = new Float32Array(B); b.lastBin = -1; }
-    else if (T !== b.T) { b.ref = now - ((now - b.ref) / b.T) * T; b.T = T; }
-    const pos = ((now - b.ref) / b.T) % 1, bin = Math.floor(pos * B), a = Math.pow(0.5, b.T / 1.75);
-    // update every bin passed since the last frame, so none goes stale at low frame rates
-    for (let i = b.lastBin < 0 ? bin : (b.lastBin + 1) % B, guard = 0; guard < B; i = (i + 1) % B, guard++) {
-      b.R[i] = b.R[i] * a + odf * (1 - a);
-      if (i === bin) break;
+    if (!b.R || Math.abs(T - b.T) / T > 0.03) {
+      Object.assign(b, { T, ref: now, R: new Float32Array(FOLD), S: new Float32Array(FOLD), F: new Float32Array(GLANCE), lastBin: -1, lastGlance: -1, line: -1, lure: 0, age: 0 });
+    } else if (T !== b.T) { b.ref = now - ((now - b.ref) / b.T) * T; b.T = T; }
+    const pos = ((now - b.ref) / b.T) % 1;
+    b.lastBin = fill(b.R, pos, b.lastBin, rise, Math.pow(0.5, b.T / FOLD_HALF_LIFE));
+    b.lastGlance = fill(b.F, pos, b.lastGlance, odf, Math.pow(0.5, b.T / 1.75));
+    let top = 0, all = 0;
+    for (let i = 0; i < GLANCE; i++) {
+      const v = b.F[(i + GLANCE - 1) % GLANCE] * 0.5 + b.F[i] + b.F[(i + 1) % GLANCE] * 0.5;
+      all += v;
+      top = Math.max(top, v);
     }
-    b.lastBin = bin;
-    let peak = 0, max = 0, sum = 0;
+    b.conf = top > 0 ? clamp((top - all / GLANCE) / top) : 0;
+    const B = FOLD, S = b.S, at = (i) => S[(i + B) % B], score = (i) => at(i) + 0.5 * at(i + B / 2);
+    let sum = 0, best = 0;
     for (let i = 0; i < B; i++) {
-      const v = b.R[(i + B - 1) % B] * 0.5 + b.R[i] + b.R[(i + 1) % B] * 0.5;
-      sum += v;
-      if (v > max) { max = v; peak = i; }
+      S[i] = b.R[i] + 0.67 * (b.R[(i + 1) % B] + b.R[(i + B - 1) % B]) + 0.33 * (b.R[(i + 2) % B] + b.R[(i + B - 2) % B]);
+      sum += S[i];
     }
-    b.conf = max > 0 ? clamp((max - sum / B) / max) : 0;
-    const target = (pos - (peak + 0.5) / B + 1) % 1;
+    for (let i = 1; i < B; i++) if (score(i) > score(best)) best = i;
+    b.age += dt / b.T;
     b.prev = b.phase;
-    b.phase = (b.phase + dt / b.T) % 1;
-    const err = ((target - b.phase + 1.5) % 1) - 0.5;
-    b.phase = (b.phase + 0.1 * err + 1) % 1;
-    // every beat is counted while there is a tempo, so the bars and squares keep their places through a breakdown
-    // that barely shows the beat; only the sure ones are told (`on`)
-    b.tick = b.prev > 0.75 && b.phase < 0.25;
-    if (b.tick) b.count++;
+    if (b.age < 2) return this.count(b, dt, 0); // (a fold with nothing in it yet says nothing)
+    if (b.line < 0) b.line = best;
+    let here = b.line; // the line, following its own peak as that settles
+    for (let j = -3; j <= 3; j++) if (score(b.line + j) > score(here)) here = (b.line + j + B) % B;
+    b.line = here;
+    b.lure = score(best) > (b.age < 16 ? 1 : 1.25) * score(here) ? b.lure + dt / b.T : 0; // (a young fold changes its mind more easily)
+    if (b.lure >= (b.age < 16 ? 1 : 4)) { b.line = best; b.lure = 0; }
+    const l = at(b.line - 1), r = at(b.line + 1), c = at(b.line), bend = l - 2 * c + r; // (the peak between its bins)
+    b.clear = c > 0 ? clamp((c - sum / B) / c) : 0;
+    const target = (pos - (b.line + 0.5 + (bend < 0 ? (0.5 * (l - r)) / bend : 0)) / B + 2) % 1;
+    const err = ((target - b.phase + 1.5) % 1) - 0.5, most = b.age < 8 ? 0.5 : 0.15; // (a new fold is let find the beat quickly)
+    return this.count(b, dt, Math.max(-most, Math.min(most, err)));
+  }
+
+  // every beat is counted while there is a tempo, so the bars and squares keep their places through a breakdown that
+  // barely shows the beat; only the sure ones are told (`on`)
+  count(b, dt, lean) {
+    b.phase += (dt / b.T) * (1 + lean);
+    b.tick = b.phase >= 1;
+    if (b.tick) { b.phase -= 1; b.count++; }
     if (b.tick && b.conf > 0.08) {
       b.on = true;
       b.pulse = 1;

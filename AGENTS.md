@@ -5,11 +5,17 @@ The README is for people. This file is the technical map.
 ## Layout
 
 - `index.html`, `style.css`: the page. Plain ES modules, no build, no dependencies. Serve the folder over HTTP.
-- `js/main.js`: audio graph, pads, line in, the frame loop, transitions, UI.
+- `js/main.js`: audio graph, pads, line in, the frame loop, transitions, UI. The loop is a worker's 60 Hz timer, not rAF:
+  onsets are measured frame to frame, so they must not change with the refresh rate, and a covered window has neither
+  rAF nor timers of its own to speak of.
 - `js/overlay.js`: the dock and the cards over the picture, the fill and full screen buttons.
-- `js/analysis.js`: the `Listener` (bands, attacks, BPM by comb ACF, key) and `Mood` (valence × arousal → mood).
+- `js/analysis.js`: the `Listener` (bands, attacks, BPM by comb ACF, beat phase by a long fold of the low end's and the
+  mids' rises, key), `Tap` (the server's loopback read straight from a ring, in place of the AnalyserNodes) and `Mood`
+  (valence × arousal → mood).
 - `js/groove.js`: the part of the track (groove, peak, pit, breakdown, build-up, drop), the visual budget it
   allows, the rhythm template (lock, sync, swing, fills) and the phrase ("squares", 2–16 bars).
+- `js/sync.js`: `Sync` reads the beat and the squares ahead, as the room hears them, off the squares' clock; `Foresee`
+  tells the hits a groove keeps repeating on time, before they are heard.
 - `js/styles.js` → `js/mixer.js`: every family file (`js/<family>.js`) registers its worlds with
   `registerFamily`; `DEFS` holds them all (414 at the time of writing, 41 entries in the **art** menu).
   `geo: true` on a world's def is what allows kaleidoscope/mirror treatments over it.

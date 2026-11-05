@@ -55,6 +55,7 @@ export class Touch {
     this.seq = 0;
     this.sentAt = new Float64Array(256);
     this.tripSeq = -1;
+    this.beats = [];
     this.lag = 0; // seconds the way round through TouchDesigner takes
     this.detail = 0; // how noisy the world on the canvas is (look())
     this.motion = 0;
@@ -159,10 +160,11 @@ export class Touch {
     this.motion += (moved / cells - this.motion) * 0.12;
   }
 
-  sendFrame(N, data, vis) {
+  sendFrame(N, data, vis, beat = false) {
     if (!this.speaking || this.ws.bufferedAmount > 1 << 18) return;
     const buf = new ArrayBuffer(4 + N * N * 4), head = new DataView(buf);
     this.seq = (this.seq + 1) & 0xffff; // TouchDesigner gives it back with what it made of this frame (trip())
+    if (beat) this.beats.push(this.seq);
     this.sentAt[this.seq & 255] = performance.now();
     head.setUint16(0, N, true);
     head.setUint16(2, this.seq, true);
@@ -197,6 +199,7 @@ export class Touch {
         const tail = blob.slice(-4).arrayBuffer();
         this.show(await createImageBitmap(blob), 'stream');
         this.trip(new DataView(await tail));
+        this.painted?.();
       } catch { /* a broken picture: skip it */ }
       busy = false;
       if (next) { const b = next; next = null; decode(b); }
@@ -257,13 +260,17 @@ export class Touch {
     if (this.showing) ctx.drawImage(this.bmp, 0, 0, size, size);
   }
 
-  // a kick due on this beat, told with the beat, which is read ahead; the real one is heard later and adds nothing
-  kick(strength) {
-    if (!this.speaking) return;
-    const now = performance.now() / 1000;
-    this.hits[''].hit(strength, now);
-    this.hits.kick?.hit(strength, now);
-    this.kickAt = now;
+  // the frames with a beat in them, as they reach the canvas (tools/sync_check.py)
+  shown() {
+    while (this.beats.length && ((this.tripSeq - this.beats[0]) & 0xffff) < 0x8000) {
+      this.beats.shift();
+      this.mark('shown');
+    }
+  }
+
+  // a moment on the wall clock, for tools/sync_check.py to hold against the sound
+  mark(kind, detail = 0) {
+    if (this.speaking) this.queue.push(['/mark', kind, Date.now() / 1000, detail]);
   }
 
   // a new track: the Directors start reading its form afresh
@@ -301,6 +308,7 @@ export class Touch {
     if (changed('scene', sc.name)) this.queue.push(['/scene', sc.name, sc.def.title]);
     if (changed('key', keyName)) this.queue.push(['/key', keyName]);
     if (g && changed('part', g.state)) this.queue.push(['/part', g.state]);
+    if (g?.event === 'fill') this.queue.push(['/fill']);
     const msg = JSON.stringify({ v: this.values(f, now), e: this.queue.splice(0) });
     if (this.ws.bufferedAmount < 1 << 16) this.ws.send(msg); // a stalled socket drops frames rather than piling up
   }
@@ -318,6 +326,8 @@ export class Touch {
       'scene/index': this.keys.indexOf(sc.name), 'scene/mix': st.prev ? st.mix : 1, 'scene/time': st.sceneTime,
       'scene/geo': sceneGeo(sc) && (!st.prev || sceneGeo(st.prev)) ? 1 : 0,
       'scene/detail': this.detail, 'scene/motion': this.motion, 'groove/budget': f.groove?.budget ?? 1,
+      'sync/ahead': st.ahead, 'sync/lag': this.lag, 'sync/age': st.age,
+      'track/left': st.trackEnd ? Math.max(0, st.trackEnd - Date.now() / 1000) : -1,
       'groove/tension': f.groove?.tension ?? 0, 'groove/energy': f.groove?.energy ?? 0.5, 'groove/drive': f.groove?.drive ?? 0.5,
       'groove/lock': f.groove?.lock ?? 0, 'square/bar': f.groove?.square?.bar ?? 0, 'square/bars': f.groove?.square?.bars ?? 4,
       ink: st.ink, idle: st.idle ? 1 : 0, hit: this.hits[''].at(now),

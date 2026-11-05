@@ -230,19 +230,18 @@ export class Groove {
     const b = f.beat;
     if (!this.anchor) this.anchor = { t: now - b.phase * b.T, T: b.T, n: 0 };
     const A = this.anchor;
-    const G = (this.tg ||= { kick: new Float32Array(24), kicks: 0, beats: 0, want: 0, place: true });
+    const G = (this.tg ||= { beats: 0, want: 0, place: true });
     if (A.T !== b.T) {
-      if (Math.abs(A.T - b.T) / b.T > 0.03) Object.assign(G, { kick: new Float32Array(24), kicks: 0, beats: 0, place: true });
+      if (Math.abs(A.T - b.T) / b.T > 0.03) Object.assign(G, { beats: 0, place: true });
       A.t = now - ((now - A.t) / A.T) * b.T; // the beat count at this moment carries on
       A.T = b.T;
     }
-    if (f.onset) this.kickPhase(G, now, f.onset);
     if (b.tick && b.conf > 0.15) {
-      const x = (now - b.phase * b.T - A.t) / A.T, h = Math.round(2 * x) / 2, r = x - h; // (a beat on the off half too)
+      const x = (now - b.phase * b.T - A.t) / A.T, h = Math.round(x), r = x - h;
       if (Math.abs(r) < 0.2) { A.t += 0.15 * r * A.T; A.off = 0; G.beats++; }
       else if ((A.off = (A.off || 0) + 1) >= 8) { A.t += r * A.T; A.off = 0; } // the tracker found the beat elsewhere
       // the listener's bar lines go onto the grid's, once it agrees twice running on the grid's own beats
-      const want = h % 1 || A.off ? 0 : (((h - b.count) % SQUARE0) + SQUARE0) % SQUARE0;
+      const want = A.off ? 0 : (((h - b.count) % SQUARE0) + SQUARE0) % SQUARE0;
       if (want && want === G.want) this.shift = want;
       G.want = want;
     }
@@ -258,19 +257,6 @@ export class Groove {
     const line = n > A.n;
     A.n = Math.max(A.n, n);
     return { len: L, bars: L / 4, beat, bar: Math.min(L / 4 - 1, Math.floor(beat / 4)), n, x, line, sure: true };
-  }
-
-  // Where the low end's onsets fall on the beat (24 bins, weighted by how much of the onset is low): once half a
-  // beat later clearly has more of them, the beats are on the other half, and the grid moves there.
-  kickPhase(G, now, onset) {
-    const A = this.anchor, B = 24, bin = Math.floor(((((now - A.t) / A.T) % 1) + 1) % 1 * B);
-    G.kick[bin] += onset.low;
-    if (++G.kicks < 96 || G.kicks % 32) return;
-    const w = (c) => G.kick[(c + B - 1) % B] + G.kick[c] + G.kick[(c + 1) % B] + G.kick[(c + 2) % B];
-    if (w(B / 2) <= 1.6 * w(0)) return; // (broken beats spread their kicks: only a clear call)
-    A.t += A.T / 2;
-    G.kick = Float32Array.from({ length: B }, (_, j) => G.kick[(j + B / 2) % B]);
-    G.place = true;
   }
 
   // A part begins at time `t` (`w` says how sure that is; `hard`: a drop or a track's start, which always begins a

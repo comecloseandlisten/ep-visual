@@ -1,6 +1,6 @@
 // ep-visual: play pads or feed LINE IN, read the mood, paint it on a 1000x1000 pixel canvas.
 import { Raster, bayer, clamp, hexRgb, makeNoise, rankMap, rng } from './pixels.js';
-import { Listener, MOODS, Mood, analyzeBuffer } from './analysis.js';
+import { Listener, MOODS, Mood, analyzeBuffer, classifyOnset } from './analysis.js';
 import { MOOD_STYLES, STYLES, styleMeaning } from './styles.js';
 import { EFFECTS, LightShow } from './light.js';
 import { Groove, grooveFit, liveFit, wantOf } from './groove.js';
@@ -12,7 +12,7 @@ import { Touch } from './touch.js';
 import { Knobs } from './knobs.js';
 import { Recorder } from './record.js';
 import { Overlay } from './overlay.js';
-import { Sync } from './sync.js';
+import { Foresee, Sync } from './sync.js';
 
 const $ = (sel) => document.querySelector(sel);
 const SIZE = 1000;
@@ -46,6 +46,7 @@ const light = new LightShow(); // flashes, beams and leaks over whatever is on t
 const groove = new Groove(); // how much the picture can take right now, and where the squares begin
 const sync = new Sync(); // the beat and the squares where the room hears them, held for the scene frames
 const lightSync = new Sync(); // the same for the light: last in line, it doesn't go the way round through TouchDesigner
+const foresee = new Foresee(); // the hits a groove keeps making, told on time
 let lineIn = null;
 const resume = () => actx.state !== 'running' && actx.resume();
 
@@ -64,7 +65,6 @@ const st = {
   gevent: null,
   // the sync slider's trim on how far the picture is read ahead of what the page hears, in seconds
   sync: loadSync(),
-  beatKick: 0,
   // how the next picture comes in (`trans`) and the camera maps for it (`cam`); how long this one has been up;
   // each mood's styles in this session's order
   trans: null, cam: null, forceTrans: null, order: {}, sceneBeats: 0, sceneTime: 0,
@@ -88,11 +88,11 @@ function loadSync() {
 // input has about three hundredths of latency, and the page's own pads reach the speakers after the listener hears
 // them; a jam's clock is the device's own. Then a frame or two to the screen, the slider's trim, and the way round
 // through TouchDesigner while the canvas shows what it made.
-const SCREEN = 0.04;
+const SCREEN = 0.024, TICK = 1 / 120; // (a beat falls on the step nearest to it, not the first after it)
 function ahead(f) {
   const loop = lineIn?.label.startsWith('system audio ·') && nowPlaying.feed;
   const heard = f.clock ? 0 : loop ? nowPlaying.feed.lag : lineIn ? 0.03 : -(actx.outputLatency || 0);
-  return clamp(heard + SCREEN + st.sync + (touch.showing ? touch.lag : 0), 0, 0.5);
+  return clamp(heard + SCREEN + TICK + st.sync + (touch.showing ? touch.lag : 0), 0, 0.5);
 }
 
 function hashStr(s) {
@@ -382,8 +382,7 @@ function emitHit(kind, pc, strength, own = false) {
   // `at`: the beat it was heard on (count + phase as the page heard it), for whoever weighs it against the bar
   const b = listener.f?.beat, at = b && listener.bpm ? b.count + b.phase : null;
   const h = { kind, pc, strength, x, y, own, at };
-  // kicks that keep landing on the beat, which TouchDesigner is then told of with the beat itself
-  if (kind === 'kick' && !own && at !== null && Math.abs(at - Math.round(at)) < 0.2) st.beatKick += (strength - st.beatKick) * 0.25;
+  if (kind === 'kick' && !own) touch.mark('hit', strength);
   touch.hit(kind, strength);
   st.hits.push(h);
   if (st.hits.length > 64) st.hits.shift();
@@ -408,18 +407,6 @@ function soak(dt) {
       }
   }
   st.drops = st.drops.filter((d) => d.age < 0.8);
-}
-
-function classifyOnset(o, f) {
-  if (f.tonal > 0.55) {
-    let pc = 0;
-    for (let i = 1; i < 12; i++) if (f.frameChroma[i] > f.frameChroma[pc]) pc = i;
-    return { kind: f.bands.sub + f.bands.low > 0.5 ? 'bass' : 'keys', pc };
-  }
-  if (o.high > o.mid * 1.5 && o.high > o.low) return { kind: 'hat', pc: -1 };
-  if (o.low > o.mid * 4) return { kind: 'kick', pc: -1 };
-  if (o.mid + o.high > o.low * 0.5) return { kind: 'snare', pc: -1 };
-  return { kind: 'perc', pc: -1 };
 }
 
 // ---------------------------------------------------------------------------------------------- pads
@@ -756,12 +743,22 @@ function step(ms) {
   const name = mood.update(f, dt, now);
   // the frame as the room hears it: what the picture, the light, the cuts and TouchDesigner go by
   st.ahead = ahead(f);
+  st.age = listener.tap?.age ?? 0;
   const v = sync.view(f, now, dt, st.ahead);
   const lv = touch.showing ? lightSync.view(f, now, dt, Math.max(0, st.ahead - touch.lag)) : null;
+  touch.mark('low', f.lowDb);
+  if (f.beat.tick) touch.mark('raw', f.beat.conf);
+  if (v.beat.tick) touch.mark('seen', f.beat.conf);
+  const gx = g.square ? Math.floor(g.square.x) : -1;
+  if (gx !== st.gridBeat) { st.gridBeat = gx; touch.mark('anchor'); }
 
   if (f.onset) {
     const k = classifyOnset(f.onset, f);
-    if (now - st.lastPadHit > 0.1) emitHit(k.kind, k.pc, f.onset.strength);
+    if (!foresee.heard(k.kind, g.square?.x ?? null, f.onset.strength) && now - st.lastPadHit > 0.1) emitHit(k.kind, k.pc, f.onset.strength);
+  }
+  if (g.square) {
+    const h = foresee.due(g.square.x, v.groove.square.x, f.beat.clear > 0.3 && !g.fill && g.state !== 'pit' && g.state !== 'break');
+    if (h) emitHit(h.kind, -1, h.strength);
   }
   // while the music plays the whole canvas is painted: the wash floods it in under a second and nothing dries, not
   // even in a breakdown. Only a real silence, a few seconds of next to nothing (the track stopped), dries it away
@@ -781,11 +778,7 @@ function step(ms) {
   // the stories) gets longer, since it moves on by itself; a fixed classic style is recomposed instead. It comes
   // on the line of a square, and never in a build or a pit: the drop that follows brings a new picture anyway
   const sq = v.groove.square, vb = v.beat, waiting = g.state === 'build' || g.state === 'pit';
-  if (vb.on) {
-    st.sceneBeats++;
-    if (st.beatKick > 0.4) touch.kick(st.beatKick);
-    st.beatKick *= 0.92;
-  }
+  if (vb.on) st.sceneBeats++;
   st.sceneTime += dt;
   if (!st.idle && !st.prev && st.ink > 0.2 && !waiting) {
     const self = STYLES[st.cur.name].byMood, hold = (mood.a > 0.6 ? 8 : mood.a > 0.42 ? 12 : 16) * (self ? 1.5 : 1);
@@ -824,7 +817,8 @@ function step(ms) {
   st.crossed = false;
   touch.frame(v, now);
 
-  if (now - lastDraw >= 1 / FPS - 0.002) {
+  // (a beat doesn't wait for the next scene frame: the frames follow it)
+  if (now - lastDraw >= 1 / FPS - 0.002 || (v.beat.on && now - lastDraw >= 0.012)) {
     const step = Math.min(0.1, now - lastDraw);
     lastDraw = now;
     if (!st.hold) draw(step, sync.take(v), lv && lightSync.take(lv));
@@ -835,16 +829,6 @@ function step(ms) {
   }
 }
 
-let lastRaf = 0;
-function loop(ms) {
-  lastRaf = performance.now();
-  step(ms);
-  requestAnimationFrame(loop);
-}
-// rAF stalls when the window isn't painted (covered window, OBS/background capture); keep listening on a timer.
-setInterval(() => {
-  if (performance.now() - lastRaf > 120) step(performance.now());
-}, 16);
 
 // a scene draws in the frame the world's knobs make (knobs.js): its own clock, what it hears, its unit, and the camera
 // and trails on its raster; then its colours as the knobs paint them
@@ -877,6 +861,7 @@ function thin(hits, g) {
 // `lit`: the frame as the light goes by it, when that isn't `f`
 function draw(dt, f, lit = null) {
   const N = st.N, hits = st.hits.splice(0);
+  if (f.beat.on) touch.mark('draw');
   st.sceneT += dt;
   knobs.update(dt);
   soak(dt);
@@ -937,7 +922,7 @@ function draw(dt, f, lit = null) {
   // to TouchDesigner as painted, without the light show: it lays its own effects over it (its strobe, its bloom). The
   // light is the last thing of all: on the pixel grid here, or, while its result is on the canvas, over that (below)
   touch.look(cur.raster.buf, N);
-  touch.sendFrame(N, img.data, vis);
+  touch.sendFrame(N, img.data, vis, f.beat.on);
   const fromTd = touch.showing, lighting = light.on && !st.idle;
   if (lighting && !fromTd) light.apply(img.data, N, N / 125, st.ink);
   if (!fromTd) { // (its picture covers the canvas: nothing of this would be seen)
@@ -951,12 +936,20 @@ function draw(dt, f, lit = null) {
       bigCtx.globalCompositeOperation = 'source-over';
     }
   }
-  if (fromTd && lighting) light.over(bigCtx, touch.bmp, SIZE, st.ink);
-  else touch.drawView(bigCtx, SIZE); // what it made of it, while TD FX is on
-  if (st.label) drawLabel(f);
+  st.drawn = f;
+  // (TouchDesigner's picture goes on as it comes back: paintTd(); this is for when none has come for a moment)
+  if (!fromTd) { if (st.label) drawLabel(f); } else if (performance.now() - touch.bmpAt > 50) paintTd();
   if (st.ink < 0.001 && !st.drops.length && f.level < 0.1) st.idle = true;
 }
 
+// what TouchDesigner made of it, onto the canvas the moment it comes back (the light goes over it, last of all)
+function paintTd() {
+  if (!touch.showing) return;
+  if (light.on && !st.idle) light.over(bigCtx, touch.bmp, SIZE, st.ink);
+  else touch.drawView(bigCtx, SIZE);
+  if (st.label && st.drawn) drawLabel(st.drawn);
+  touch.shown();
+}
 // sticker in the corner, in the same 3x5 font, so it ends up in saved PNGs
 const labelRaster = new Raster(64);
 function drawLabel(f) {
@@ -1195,12 +1188,13 @@ navigator.mediaDevices?.addEventListener?.('devicechange', () => (standMode ? fo
 // ?listen=spotify (open_visualizer(listen='spotify')) starts that listening by itself where no click is needed.
 const spotifyMode = new URLSearchParams(location.search).get('listen') === 'spotify';
 const nowPlaying = new NowPlaying({
-  $, actx, listener, mood, status, audioInputs, startLineIn, useLineStream,
+  $, actx, listener, lineGain, mood, status, audioInputs, startLineIn, useLineStream,
   // a new track is a new composition: the parts and the squares start over at once; the picture follows once the
   // track is described (what it is about decides the worlds), or after a few seconds without a description
-  newTrack: () => { groove.newTrack(); touch.newTrack(); },
+  newTrack: () => { groove.newTrack(); touch.newTrack(); listener.newTrack(); foresee.reset(); },
   // when the playing track's 0:00 played (the player's clock, seconds since 1970), or null: the squares count from there
-  timeline: (startAt) => {
+  timeline: (startAt, seconds) => {
+    st.trackEnd = startAt && seconds ? startAt + seconds : null; // (the Directors let a track go as it ends)
     trackStart = startAt;
     placeTrack();
   },
@@ -1244,7 +1238,13 @@ renderPads();
 loadLibrary().then(() => (standMode ? followStand() : spotifyMode ? nowPlaying.listen({ auto: true }) : null));
 if (!standMode) listInputs().catch(() => {});
 connectJam();
-requestAnimationFrame(loop);
 
 // handy for poking at it from the console
+// The page's clock: sixty steps a second from a worker's timer, the same on any screen and covered or not. The listener's
+// onsets are measured frame to frame, so they must not change with the refresh rate (a 165 Hz screen heard a third of
+// them); and a covered window has no rAF and its own timers are slowed to one a second, which leaves nothing of the beat.
+const ticker = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 1000 / 60)'], { type: 'text/javascript' })));
+ticker.onmessage = () => step(performance.now());
+touch.painted = paintTd;
+
 window.epVisual = { st, mood, listener, light, groove, sync, groups, trigger, emitHit, crossTo, onSection, actx, master, jam, nowPlaying, touch, knobs, recorder, line: () => lineIn };
