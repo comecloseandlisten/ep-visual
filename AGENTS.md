@@ -52,7 +52,7 @@ The page works alone (pads, line in, screen-share audio). When a server answers 
 | `GET /api/samples` | sample library `{library_dir, samples: [{folder, name, url, mtime}]}`; folders become kits |
 | `GET /api/events` | SSE: jam notes and beat clock, the track the computer plays, `td`/`control`/`knobs`, `record` |
 | `GET /api/loopback` | the computer's audio output as a stream |
-| `WS /api/frames`, `WS /api/td`, `WS /api/td/stream`, `GET /api/td/frame` | TouchDesigner bridge (`td.html` is what TouchDesigner renders) |
+| `WS /api/frames`, `WS /`, `WS /api/td`, `WS /api/td/stream`, `GET /api/td/frame` | TouchDesigner bridge: `td.html` gets the raw pixel grid from `/api/frames`, TouchDesigner's WebSocket DAT gets it zipped from `/`. A picture back ends in `EP` and the page's frame number, so the page measures the way round and reads the beat ahead by it |
 | `POST /api/record/claim`, `POST /api/record/upload` | remote-triggered recording |
 
 Every call fails quietly without the server (two 404s in the console are expected).

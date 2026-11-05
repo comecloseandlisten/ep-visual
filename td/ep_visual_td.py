@@ -29,7 +29,7 @@
 # differently is skipped and listed at the end (and in the `notes` DAT), so it can be fixed by hand or through the
 # MCP tool td_set.
 
-API_VERSION = 5  # what this script builds; teenage_mcp.tdfx.API_VERSION is what the server expects
+API_VERSION = 6  # what this script builds; teenage_mcp.tdfx.API_VERSION is what the server expects
 PAGE = 'http://127.0.0.1:8133/'
 PORT = 7000
 API_PORT = 9980
@@ -38,6 +38,8 @@ SOURCE = 'websocket'  # how the picture comes in: websocket (WebSocket DAT + Scr
 FLIP = True  # TouchDesigner's textures start at the bottom row, the page's grid at the top
 PUSH_EVERY = 2  # `out` goes to the page every this many frames (2: ~30 a second at 60 fps)
 LAG_UP, LAG_DOWN = 0.03, 0.12  # seconds the Lag CHOP takes to follow a rise and a fall
+RES = dict(outputresolution=('custom',), resolutionw=1000, resolutionh=1000)  # a Cross TOP takes its second input's size
+CRISP = dict(inputfiltertype=('nearest',))  # what moves the picture keeps its cells whole: linear smears, feedback every frame
 GEN_N = 125  # the procedural layer's grid: the page's own cells (125 -> 8 pixels each)
 # what the procedural layer can draw, as teenage_mcp.tdfx.GEN_KINDS (/ep/fx/gen/kind is the index)
 GEN_KINDS = ('rings', 'bars', 'orbit', 'lissajous', 'sparks', 'floor', 'scope')
@@ -130,7 +132,7 @@ def _displace(comp, src, x, v):
     noise = _node(comp, noiseTOP, 'displace_noise', (x, -450), mono=False,
                   period=E(f"max(0.05, {v}('fx/displace/scale'))"),
                   tz=E(f"absTime.seconds * {v}('fx/displace/speed')"))
-    fx = _node(comp, displaceTOP, 'displace_fx', (x, -200), inputs=(src, noise))
+    fx = _node(comp, displaceTOP, 'displace_fx', (x, -200), inputs=(src, noise), **CRISP)
     weight = E(f"{v}('fx/displace/weight') * (0.4 + {v}('drive/bass'))")
     _set_any(fx, {'displaceweightx': weight, 'displaceweighty': weight}, {'displaceweight': weight})
     return fx
@@ -149,14 +151,14 @@ def _gen(comp, src, x, v):
 
 def _mirror(comp, src, x, v):
     scale = E(f"1 / max(1, {v}('fx/mirror/tiles'))")
-    return _node(comp, transformTOP, 'mirror_fx', (x, -200), inputs=(src,), extend=('mirror',), sx=scale, sy=scale,
+    return _node(comp, transformTOP, 'mirror_fx', (x, -200), inputs=(src,), extend=('mirror',), sx=scale, sy=scale, **CRISP,
                  rotate=E(f"({v}('clock/mid') * 40 * {v}('fx/mirror/spin')) % 360"))
 
 
 def _feedback(comp, src, x, v):
     loop = _node(comp, feedbackTOP, 'feedback_loop', (x, -200), inputs=(src,))
     zoom = E(f"1 + ({v}('fx/feedback/zoom') - 1) * (1 + 1.5 * {v}('beat/pulse'))")
-    move = _node(comp, transformTOP, 'feedback_move', (x, -350), inputs=(loop,), sx=zoom, sy=zoom,
+    move = _node(comp, transformTOP, 'feedback_move', (x, -350), inputs=(loop,), sx=zoom, sy=zoom, **CRISP,
                  rotate=E(f"{v}('fx/feedback/spin') * (0.5 + {v}('drive/mid'))"))
     fade = _node(comp, levelTOP, 'feedback_fade', (x, -500), inputs=(move,),
                  brightness1=E(f"{v}('fx/feedback/decay')"))
@@ -171,9 +173,9 @@ def _rgbsplit(comp, src, x, v):
     parts = []
     for k, (ch, shift, rgb) in enumerate((('r', f'-({off})', (1, 0, 0)), ('g', '0', (0, 1, 0)), ('b', off, (0, 0, 1)))):
         y = -200 - 150 * k
-        moved = _node(comp, transformTOP, f'rgbsplit_{ch}_move', (x - 120, y), inputs=(src,), tx=E(shift))
+        moved = _node(comp, transformTOP, f'rgbsplit_{ch}_move', (x - 120, y), inputs=(src,), tx=E(shift), **CRISP)
         tint = _node(comp, constantTOP, f'rgbsplit_{ch}_tint', (x - 240, y), colorr=rgb[0], colorg=rgb[1],
-                     colorb=rgb[2])
+                     colorb=rgb[2], **RES)
         parts.append(_node(comp, multiplyTOP, f'rgbsplit_{ch}', (x, y), inputs=(moved, tint)))
     return _node(comp, compositeTOP, 'rgbsplit_fx', (x, -700), inputs=tuple(parts), operand=('add',))
 
@@ -240,12 +242,9 @@ def _variants(name):
     return ('ep/' + name, '/ep/' + name, name, 'ep_' + flat, '_ep_' + flat, flat)
 
 
-def v(name, default=0.0):
-    c = op(ROOT + '/smooth') if name.startswith(SMOOTHED) else None
+def _channel(c, name):
     if c is None:
-        c = op(ROOT + '/values')
-    if c is None:
-        return default
+        return None
     ch = c.chan(_NAMES[name]) if name in _NAMES else None
     if ch is None:
         for candidate in _variants(name):
@@ -253,6 +252,14 @@ def v(name, default=0.0):
             if ch is not None:
                 _NAMES[name] = candidate
                 break
+    return ch
+
+
+def v(name, default=0.0):
+    # (the Lag CHOP has no channels until it has cooked once: the raw value does until then)
+    ch = _channel(op(ROOT + '/smooth'), name) if name.startswith(SMOOTHED) else None
+    if ch is None:
+        ch = _channel(op(ROOT + '/values'), name)
     if ch is None:
         return default
     try:
@@ -267,9 +274,14 @@ def v(name, default=0.0):
 PUSH = '''# ep visual, after every frame: the style's palette into tint_keys (dark to light, for the tint effect), the
 # procedural layer drawn while it is up, and, every PUSH_EVERY frames, `out` as a JPEG to the stream clients of `api`
 # (the MCP server, which shows it on the page)
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
 ROOT = {root!r}
 PUSH_EVERY = {every!r}
-QUALITY = 0.85
+QUALITY = 0.92  # less smears the edges of the page's cells
 
 
 def _palette(comp):
@@ -293,12 +305,31 @@ def _palette(comp):
         keys.appendRow([round(i / max(1, len(cols) - 1), 4), r, g, b, 1])
 
 
+def _jpeg(out):
+    # `out` as a JPEG. saveByteArray waits for the GPU, 23 ms of a 16 ms frame; a delayed read takes 1 ms and gives the
+    # frame before, and OpenCV packs that in 5 ms, with the colours at full resolution, so the cells keep their edges
+    if cv2 is None:
+        return bytes(out.saveByteArray('.jpg', quality=QUALITY))
+    a = out.numpyArray(delayed=True)
+    if a is None:
+        return None
+    picture = cv2.flip(cv2.cvtColor(cv2.convertScaleAbs(a, alpha=255), cv2.COLOR_RGBA2BGR), 0)
+    done, data = cv2.imencode('.jpg', picture, [int(cv2.IMWRITE_JPEG_QUALITY), int(QUALITY * 100),
+                                                int(cv2.IMWRITE_JPEG_SAMPLING_FACTOR), int(cv2.IMWRITE_JPEG_SAMPLING_FACTOR_444)])
+    return data.tobytes() if done else None
+
+
 def _push(comp, frame):
     clients = list(comp.fetch('ep_stream_clients', []) or [])
     if not clients or frame % PUSH_EVERY:
         return
     api, out = comp.op('api'), comp.op('out')
-    data = out.saveByteArray('.jpg', quality=QUALITY)
+    # after the picture's end, which decoders stop at: the number of the page's frame it was made from, so the page can
+    # tell how long the way round took
+    data = _jpeg(out)
+    if data is None:
+        return
+    data += b'EP' + int(comp.fetch('ep_seq', 0)).to_bytes(2, 'little')
     alive = []
     for client in clients:
         try:
@@ -308,6 +339,15 @@ def _push(comp, frame):
             pass
     if len(alive) != len(clients):
         comp.store('ep_stream_clients', alive)
+
+
+def _pull(comp):
+    # what nothing downstream pulls, TouchDesigner cooks about once a second unless it is on screen: the Lag CHOP, which
+    # only Python reads, and the WebSocket DAT, which takes in the page's pictures when it cooks
+    for name in ('smooth', 'frames_in'):
+        o = comp.op(name)
+        if o is not None:
+            o.cook(force=True)
 
 
 def _gen(comp):
@@ -321,6 +361,7 @@ def onFrameEnd(frame):
     comp = op(ROOT)
     if comp is None:
         return
+    _pull(comp)
     _palette(comp)
     _gen(comp)
     _push(comp, int(frame))
@@ -360,8 +401,10 @@ def onPulse(par):
             _send('/ep/world/' + name, value)
 '''
 
-FRAMES = '''# ep visual: the page's pixel grid, pushed by the visualizer's server (/api/frames) as binary messages: uint16 N
-# (little-endian), 2 spare bytes, N*N RGBA cells, alpha 0 where the paper is bare. Kept on frames_tex, which shows it.
+FRAMES = '''# ep visual: the page's pixel grid, pushed by the visualizer's server as binary messages: uint16 N and frame number
+# (little-endian), then N*N RGBA cells, zipped, alpha 0 where the paper is bare. Kept on frames_tex, which shows it.
+import zlib
+
 import numpy as np
 
 ROOT = {root!r}
@@ -393,10 +436,14 @@ def onReceiveBinary(dat, contents):
     data = bytes(contents)
     if len(data) < 4:
         return
-    n = int.from_bytes(data[:2], 'little')
-    if n == 0 or len(data) != 4 + n * n * 4:
+    n, seq = int.from_bytes(data[:2], 'little'), int.from_bytes(data[2:4], 'little')
+    try:
+        cells = zlib.decompress(data[4:])
+    except zlib.error:
         return
-    a = np.frombuffer(data, dtype=np.uint8, count=n * n * 4, offset=4).reshape(n, n, 4).copy()
+    if n == 0 or len(cells) != n * n * 4:
+        return
+    a = np.frombuffer(cells, dtype=np.uint8).reshape(n, n, 4).copy()
     a[a[:, :, 3] == 0] = PAPER
     k = max(1, 1000 // n)  # whole pixels: 125 -> 1000, 200 -> 1000
     a = a.repeat(k, 0).repeat(k, 1)
@@ -405,6 +452,7 @@ def onReceiveBinary(dat, contents):
     tex = op(ROOT + '/frames_tex')
     tex.store('frame', np.ascontiguousarray(a))
     tex.cook(force=True)
+    op(ROOT).store('ep_seq', seq)
 '''
 
 TEX = '''# ep visual: shows the last pixel grid frames_in received
@@ -425,11 +473,11 @@ def onCook(scriptOp):
 GEN = '''# ep visual: the procedural layer. Elements TouchDesigner draws itself from the music, in the page's own pixel grid
 # (N cells of SCALE pixels) and the colours of the world on the canvas; /ep/fx/gen/kind says which, /ep/fx/gen/size
 # how big. Row 0 is the bottom, as TouchDesigner's textures are. The push Execute DAT cooks this while /ep/fx/gen is up.
-#   rings      a ring goes out from the middle on every kick (on the beat when no kick is heard)
+#   rings      a ring goes out from the middle on every beat, as strong as the kicks are (without a tempo, on the kicks)
 #   bars       the ten bands as a skyline mirrored from the middle, the lows in the centre, caps falling back
 #   orbit      dots circling the middle, wider with the bass, more of them the busier the top end, with trails
 #   lissajous  a figure whose ratio comes from the key, turning with the mids, swelling with the level
-#   sparks     a burst of sparks on every hat and snare, falling
+#   sparks     a burst of sparks on the off-beats while there are hats and snares (without a tempo, on those), falling
 #   floor      a perspective grid floor whose lines come one a beat
 #   scope      a trace of the ten bands as waves across the middle, each moving with its band's clock
 import math
@@ -443,8 +491,9 @@ N = {n!r}
 SCALE = {scale!r}
 _Y, _X = np.mgrid[0:N, 0:N].astype(np.float32) + 0.5
 S = dict(t=None, kind=None, rings=[], sparks=np.zeros((0, 5), np.float32), trail=np.zeros((N, N), np.float32),
-         caps=np.zeros(10, np.float32), kick=0.0, hat=0.0, count=None, since=0.0, rng=np.random.default_rng())
-MUSIC = ('level', 'bpm', 'beat/phase', 'beat/pulse', 'beat/count', 'hit/kick', 'hit/bass', 'hit/snare', 'hit/hat',
+         caps=np.zeros(10, np.float32), kick=0.0, hat=0.0, count=None, half=None, kicks=0.0, hats=0.0,
+         rng=np.random.default_rng())
+MUSIC = ('level', 'bpm', 'beat/phase', 'beat/pulse', 'beat/count', 'beat/conf', 'hit/kick', 'hit/bass', 'hit/snare', 'hit/hat',
          'drive/bass', 'high', 'busy', 'clock/bass', 'clock/mid', 'clock/treb', 'section/drop')
 
 
@@ -483,15 +532,26 @@ def _beat(m):
     return 60.0 / m['bpm'] if m['bpm'] > 0 else 0.5
 
 
+def _locked(m):
+    return m['bpm'] > 0 and m['beat/conf'] > 0.15
+
+
+def _recent(key, x, m, dt):
+    # how hard these hits have been lately: a hit is heard a moment after the room hears it, the beat is read ahead, so
+    # with a tempo the hits only say how strong, and the beat says when
+    S[key] = max(x, S[key] * math.exp(-dt / (2 * _beat(m))))
+    return S[key]
+
+
 def _rings(img, m, dt, size, hot, other):
     kick = max(m['hit/kick'], 0.8 * m['hit/bass'])
     count = int(m['beat/count'])
-    S['since'] += dt
-    hit = kick > S['kick'] + 0.25  # the envelope jumped: a kick
-    beat = S['count'] is not None and count != S['count'] and S['since'] > 1.5 * _beat(m)
-    if hit or beat:
-        S['rings'].append([0.0, kick if hit else 0.5 + 0.5 * m['beat/pulse']])
-        S['since'] = 0.0
+    strength = _recent('kicks', kick, m, dt)
+    if _locked(m):
+        if S['count'] is not None and count != S['count']:
+            S['rings'].append([0.0, max(0.4, strength)])
+    elif kick > S['kick'] + 0.25:  # the envelope jumped: a kick
+        S['rings'].append([0.0, kick])
     S['kick'], S['count'] = kick, count
     r = np.hypot(_X - N / 2, _Y - N / 2)
     speed, reach, th = 0.6 * N / max(0.25, _beat(m)), 0.75 * N * size, 1.2 * size
@@ -548,8 +608,15 @@ def _lissajous(img, m, dt, size, hot, other):
 
 def _sparks(img, m, dt, size, hot, other):
     hat = max(m['hit/hat'], m['hit/snare'])
-    if hat > S['hat'] + 0.25:  # a hat or a snare: a burst somewhere in the upper half
-        rng, n = S['rng'], int(6 + 24 * hat)
+    strength = _recent('hats', hat, m, dt)
+    half = int(2 * (m['beat/count'] + m['beat/phase'] % 1.0))
+    if _locked(m):  # on the off-beats, while there are hats to hear
+        burst = S['half'] is not None and half != S['half'] and half % 2 == 1 and strength > 0.3
+    else:
+        burst = hat > S['hat'] + 0.25
+    S['half'] = half
+    if burst:  # somewhere in the upper half
+        rng, n = S['rng'], int(6 + 24 * max(hat, strength))
         ang, speed = rng.uniform(0, 2 * math.pi, n), rng.uniform(0.3, 0.9, n) * N * size
         x0, y0 = rng.uniform(0.15, 0.85) * N, rng.uniform(0.45, 0.9) * N
         new = np.stack([np.full(n, x0), np.full(n, y0), speed * np.cos(ang), speed * np.sin(ang),
@@ -820,13 +887,13 @@ def build(parent=None):
     tex = _node(comp, scriptTOP, 'frames_tex', (0, 250), callbacks=tex_cb.path)
     web = _node(comp, webrenderTOP, 'canvas', (0, 0), url=f'{PAGE}td.html?paper={PAPER}', outputresolution=('custom',),
                 resolutionw=1000, resolutionh=1000, audio=('off',), active=SOURCE == 'webrender')
-    src = _node(comp, crossTOP, 'source', (150, 100), inputs=(tex, web), cross=0 if SOURCE == 'websocket' else 1)
+    src = _node(comp, crossTOP, 'source', (150, 100), inputs=(tex, web), cross=0 if SOURCE == 'websocket' else 1, **RES)
 
     v = f"op('{module.path}').module.v"
     for i, (name, make) in enumerate(STAGES):
         x = 300 + 300 * i
         wet = make(comp, src, x, v)
-        src = _node(comp, crossTOP, name, (x, 0), inputs=(src, wet), cross=E(f"{v}('fx/{name}')"))
+        src = _node(comp, crossTOP, name, (x, 0), inputs=(src, wet), cross=E(f"{v}('fx/{name}')"), **RES)
     x = 300 + 300 * len(STAGES)
     out = _node(comp, nullTOP, 'out', (x, 0), inputs=(src,))
 
@@ -852,6 +919,9 @@ def build(parent=None):
     except OSError as exc:
         _problem(f'could not write {CONFIG}: {exc}')
 
+    top = op('/')
+    if top is not None:  # on pause no frame ends: no picture back to the page, no procedural layer
+        top.time.play = True
     try:
         out.cook(force=True)
     except Exception:  # noqa: BLE001

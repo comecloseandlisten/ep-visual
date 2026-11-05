@@ -52,6 +52,11 @@ export class Touch {
     this.view = !canvasOnly;
     this.bmp = null;
     this.bmpAt = 0;
+    this.seq = 0;
+    this.sentAt = new Float64Array(256);
+    this.tripSeq = -1;
+    this.lag = 0; // seconds the way round through TouchDesigner takes
+    this.kickAt = -1;
     this.tdError = '';
     this.pulling = false;
     this.btn?.classList.toggle('on', this.view);
@@ -133,8 +138,11 @@ export class Touch {
   // the pixel grid as drawn this frame, alpha 0 where the paper is bare, so td.html can lay it on its own paper
   sendFrame(N, data, vis) {
     if (!this.speaking || this.ws.bufferedAmount > 1 << 18) return;
-    const buf = new ArrayBuffer(4 + N * N * 4);
-    new DataView(buf).setUint16(0, N, true);
+    const buf = new ArrayBuffer(4 + N * N * 4), head = new DataView(buf);
+    this.seq = (this.seq + 1) & 0xffff; // TouchDesigner gives it back with what it made of this frame (trip())
+    this.sentAt[this.seq & 255] = performance.now();
+    head.setUint16(0, N, true);
+    head.setUint16(2, this.seq, true);
     const px = new Uint8Array(buf, 4);
     px.set(data);
     for (let i = 0; i < N * N; i++) if (!vis[i]) px[i * 4 + 3] = 0;
@@ -162,7 +170,11 @@ export class Touch {
     let busy = false, next = null;
     const decode = async (blob) => {
       busy = true;
-      try { this.show(await createImageBitmap(blob), 'stream'); } catch { /* a broken picture: skip it */ }
+      try {
+        const tail = blob.slice(-4).arrayBuffer();
+        this.show(await createImageBitmap(blob), 'stream');
+        this.trip(new DataView(await tail));
+      } catch { /* a broken picture: skip it */ }
       busy = false;
       if (next) { const b = next; next = null; decode(b); }
     };
@@ -176,6 +188,17 @@ export class Touch {
       this.sws = null;
       if (this.on && this.view) setTimeout(() => this.on && this.view && this.stream(), 2000);
     };
+  }
+
+  // How long the way round takes: a picture from TouchDesigner ends in 'EP' and the number of the page's frame it was
+  // made from. The picture on the canvas is that much behind what the page draws (sync.js reads the beat ahead by it).
+  trip(tail) {
+    if (tail.getUint16(0) !== 0x4550) return;
+    const seq = tail.getUint16(2, true), at = this.sentAt[seq & 255];
+    if (seq === this.tripSeq || !at) return; // (the same frame pushed again says nothing new)
+    this.tripSeq = seq;
+    const s = (performance.now() - at) / 1000;
+    if (s < 1) this.lag = this.lag ? this.lag + (s - this.lag) * 0.1 : s;
   }
 
   // while TD FX is on: the stream, and fetching one frame after another (up to ~30 a second) only while the stream
@@ -211,11 +234,22 @@ export class Touch {
     if (this.showing) ctx.drawImage(this.bmp, 0, 0, size, size);
   }
 
-  hit(kind, strength) {
+  // a kick due on this beat, told with the beat, which is read ahead; the real one is heard later and adds nothing
+  kick(strength) {
     if (!this.speaking) return;
     const now = performance.now() / 1000;
     this.hits[''].hit(strength, now);
-    this.hits[kind]?.hit(strength, now);
+    this.hits.kick?.hit(strength, now);
+    this.kickAt = now;
+  }
+
+  hit(kind, strength) {
+    if (!this.speaking) return;
+    const now = performance.now() / 1000;
+    if (kind !== 'kick' || now - this.kickAt > 0.4) {
+      this.hits[''].hit(strength, now);
+      this.hits[kind]?.hit(strength, now);
+    }
     this.queue.push(['/hit', kind, r4(strength)]);
   }
 

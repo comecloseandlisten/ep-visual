@@ -62,6 +62,7 @@ const st = {
   gevent: null,
   // the sync slider's trim on how far the picture is read ahead of what the page hears, in seconds
   sync: loadSync(),
+  beatKick: 0,
   // how the next picture comes in (`trans`) and the camera maps for it (`cam`); how long this one has been up;
   // each mood's styles in this session's order
   trans: null, cam: null, forceTrans: null, order: {}, sceneBeats: 0, sceneTime: 0,
@@ -83,12 +84,13 @@ function loadSync() {
 
 // How far the picture runs behind the room (sync.js): the server's loopback plays what it captured with a lead, an
 // input has about three hundredths of latency, and the page's own pads reach the speakers after the listener hears
-// them; a jam's clock is the device's own. Then a frame or two to the screen, and the slider's trim.
+// them; a jam's clock is the device's own. Then a frame or two to the screen, the slider's trim, and the way round
+// through TouchDesigner while the canvas shows what it made.
 const SCREEN = 0.04;
 function ahead(f) {
   const loop = lineIn?.label.startsWith('system audio ·') && nowPlaying.feed;
   const heard = f.clock ? 0 : loop ? nowPlaying.feed.lag : lineIn ? 0.03 : -(actx.outputLatency || 0);
-  return clamp(heard + SCREEN + st.sync, 0, 0.5);
+  return clamp(heard + SCREEN + st.sync + (touch.showing ? touch.lag : 0), 0, 0.5);
 }
 
 function hashStr(s) {
@@ -378,6 +380,8 @@ function emitHit(kind, pc, strength, own = false) {
   // `at`: the beat it was heard on (count + phase as the page heard it), for whoever weighs it against the bar
   const b = listener.f?.beat, at = b && listener.bpm ? b.count + b.phase : null;
   const h = { kind, pc, strength, x, y, own, at };
+  // kicks that keep landing on the beat, which TouchDesigner is then told of with the beat itself
+  if (kind === 'kick' && !own && at !== null && Math.abs(at - Math.round(at)) < 0.2) st.beatKick += (strength - st.beatKick) * 0.25;
   touch.hit(kind, strength);
   st.hits.push(h);
   if (st.hits.length > 64) st.hits.shift();
@@ -774,7 +778,11 @@ function step(ms) {
   // the stories) gets longer, since it moves on by itself; a fixed classic style is recomposed instead. It comes
   // on the line of a square, and never in a build or a pit: the drop that follows brings a new picture anyway
   const sq = v.groove.square, vb = v.beat, waiting = g.state === 'build' || g.state === 'pit';
-  if (vb.on) st.sceneBeats++;
+  if (vb.on) {
+    st.sceneBeats++;
+    if (st.beatKick > 0.4) touch.kick(st.beatKick);
+    st.beatKick *= 0.92;
+  }
   st.sceneTime += dt;
   if (!st.idle && !st.prev && st.ink > 0.2 && !waiting) {
     const self = STYLES[st.cur.name].byMood, hold = (mood.a > 0.6 ? 8 : mood.a > 0.42 ? 12 : 16) * (self ? 1.5 : 1);
