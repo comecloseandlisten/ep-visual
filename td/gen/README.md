@@ -27,7 +27,12 @@ Helpers:
   `beat/phase`: the beat is read ahead of the sound, while a hit reaches here late. It also keeps time without a tempo.
 - `_locked(m)`: there is a tempo to go by. `_beat(m)`: the beat in seconds.
 - `_recent(key, x, m, dt)`: how strong these hits have been lately; `key` is one of `kicks hats snares`.
-- `_bands()`: the ten bands, 0..1. `_plot(buf, xs, ys, w)`: add `w` at cells of an N x N buffer, out of range is skipped.
+- `_beats(m, rate=0.7, clock='clock/bass')`: beats so far as one running number, the fraction being the phase; without a
+  tempo that clock at that rate, so that nothing stops.
+- `_bands()`: the ten bands, 0..1. `_chroma()`: the twelve notes from C, the strongest 1.
+- `_plot(buf, xs, ys, w)`: add `w` at cells of an N x N buffer, out of range is skipped. `_ink(buf, xs, ys, w)`: the same,
+  each cell keeping the brightest that fell on it, so a line stays even. `_line(buf, x0, y0, x1, y1, w)`: straight lines,
+  one or arrays of them, with `_ink`.
 - `_shade(img, buf, hot, other)`: an N x N buffer as light, brightest in `hot`. `_trail(dt, tau)` fades `S['trail']`, an N x N
   buffer for trails, cleared when the element changes.
 - `S['own']`: a dict for the element's state, empty each time it comes in. `S['rng']`: numpy's generator. `S['t']`: the

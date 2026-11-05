@@ -30,7 +30,7 @@
 # differently is skipped and listed at the end (and in the `notes` DAT), so it can be fixed by hand or through the
 # MCP tool td_set.
 
-API_VERSION = 7  # what this script builds; teenage_mcp.tdfx.API_VERSION is what the server expects
+API_VERSION = 8  # what this script builds; teenage_mcp.tdfx.API_VERSION is what the server expects
 PAGE = 'http://127.0.0.1:8133/'
 PORT = 7000
 API_PORT = 9980
@@ -142,6 +142,12 @@ def _displace(comp, src, x, v):
     return fx
 
 
+def _big(comp, top, name, pos):
+    # a grid of cells at the size of the picture, whole cells, by the graphics card: numpy doing it, and the 4 MB
+    # going up to the card, took more than all the drawing
+    return _node(comp, resolutionTOP, name, pos, inputs=(top,), **RES, **CRISP)
+
+
 def _families():
     # the text of the family files (gen/*.py next to this script, in name order) and the elements they define
     here = globals().get('ep_td')
@@ -163,8 +169,8 @@ def _gen(comp, src, x, v):
     # paper, put over light paper. The push Execute DAT cooks gen_tex every frame while the layer is up
     callbacks = _node(comp, textDAT, 'gen_callbacks', (x, -500))
     families, more = _families()
-    callbacks.text = GEN.format(root=comp.path, kinds=GEN_KINDS + more, n=GEN_N, scale=1000 // GEN_N) + families
-    tex = _node(comp, scriptTOP, 'gen_tex', (x, -350), callbacks=callbacks.path)
+    callbacks.text = GEN.format(root=comp.path, kinds=GEN_KINDS + more, n=GEN_N) + families
+    tex = _big(comp, _node(comp, scriptTOP, 'gen_tex', (x, -350), callbacks=callbacks.path), 'gen_big', (x + 120, -350))
     if PAPER == 'black':
         return _node(comp, compositeTOP, 'gen_fx', (x, -200), inputs=(src, tex), operand=('add', 'screen'))
     return _node(comp, compositeTOP, 'gen_fx', (x, -200), inputs=(tex, src), operand=('over',))
@@ -483,9 +489,8 @@ def onReceiveBinary(dat, contents):
         return
     a = np.frombuffer(cells, dtype=np.uint8).reshape(n, n, 4).copy()
     a[a[:, :, 3] == 0] = PAPER
-    _busy(a, n)
-    k = max(1, 1000 // n)  # whole pixels: 125 -> 1000, 200 -> 1000
-    a = a.repeat(k, 0).repeat(k, 1)
+    if seq % 4 == 0:  # (what is busy where changes slower than that)
+        _busy(a, n)
     if FLIP:
         a = a[::-1]
     tex = op(ROOT + '/frames_tex')
@@ -510,7 +515,7 @@ def onCook(scriptOp):
 '''
 
 GEN = '''# ep visual: the procedural layer. Elements TouchDesigner draws itself from the music, in the page's own pixel grid
-# (N cells of SCALE pixels) and the colours of the world on the canvas; /ep/fx/gen/kind says which, /ep/fx/gen/size
+# (N cells, gen_big makes them big) and the colours of the world on the canvas; /ep/fx/gen/kind says which, /ep/fx/gen/size
 # how big. Row 0 is the bottom, as TouchDesigner's textures are. The push Execute DAT cooks this while /ep/fx/gen is up.
 #   rings      a ring goes out from the middle on every beat, as strong as the kicks are
 #   bars       the ten bands as a skyline mirrored from the middle, the lows in the centre, caps falling back
@@ -539,9 +544,8 @@ import numpy as np
 ROOT = {root!r}
 KINDS = {kinds!r}
 N = {n!r}
-SCALE = {scale!r}
 _Y, _X = np.mgrid[0:N, 0:N].astype(np.float32) + 0.5
-S = dict(t=None, kind=None, rings=[], sparks=np.zeros((0, 5), np.float32), trail=np.zeros((N, N), np.float32),
+S = dict(t=None, kind=None, colours=None, read=0.0, rings=[], sparks=np.zeros((0, 5), np.float32), trail=np.zeros((N, N), np.float32),
          caps=np.zeros(10, np.float32), kick=0.0, hat=0.0, count=None, half=None, kicks=0.0, hats=0.0, snares=0.0, own=dict(),
          rng=np.random.default_rng())
 MUSIC = ('level', 'bpm', 'beat/phase', 'beat/pulse', 'beat/count', 'beat/conf', 'hit/kick', 'hit/bass', 'hit/snare', 'hit/hat',
@@ -615,8 +619,7 @@ def _rings(img, m, dt, size, hot, other):
 
 
 def _bars(img, m, dt, size, hot, other):
-    b = np.array([_v('band/%d' % k) for k in range(10)], np.float32)
-    h = np.clip(b, 0, 1) ** 1.5 * N * 0.6 * size
+    h = _bands() ** 1.5 * N * 0.6 * size
     S['caps'] = np.maximum(S['caps'] - dt * N * 0.5, h)
     w = N / 20.0
     col = np.minimum(19, (_X[0] / w).astype(int))
@@ -640,8 +643,7 @@ def _orbit(img, m, dt, size, hot, other):
     ang = m['clock/mid'] * (0.6 + 0.4 * (i % 3)) * np.where(i % 2, -1, 1) + 2 * math.pi * i / k
     rad = N * (0.14 + 0.2 * m['drive/bass']) * size * (1 + 0.25 * np.sin(1.7 * i + m['clock/bass']))
     _plot(S['trail'], N / 2 + rad * np.cos(ang), N / 2 + rad * np.sin(ang), np.float32(0.6 + 0.6 * m['beat/pulse']))
-    t = np.clip(S['trail'], 0, 1)[..., None]
-    img += t * (hot * t + other * (1 - t))
+    _shade(img, S['trail'], hot, other)
 
 
 def _lissajous(img, m, dt, size, hot, other):
@@ -653,8 +655,7 @@ def _lissajous(img, m, dt, size, hot, other):
     amp = N * 0.36 * size * (0.55 + 0.45 * m['level'])
     ph = 0.5 * m['clock/mid']
     _plot(S['trail'], N / 2 + amp * np.sin(a * s + ph), N / 2 + amp * np.sin(b * s), np.float32(0.35 + 0.4 * m['beat/pulse']))
-    t = np.clip(S['trail'], 0, 1)[..., None]
-    img += t * (hot * t + other * (1 - t))
+    _shade(img, S['trail'], hot, other)
 
 
 def _sparks(img, m, dt, size, hot, other):
@@ -683,13 +684,12 @@ def _sparks(img, m, dt, size, hot, other):
     buf = np.zeros((N, N), np.float32)
     _plot(buf, p[:, 0], p[:, 1], np.clip(p[:, 4] * 1.5, 0, 1))
     _plot(buf, p[:, 0] - p[:, 2] * 0.02, p[:, 1] - p[:, 3] * 0.02, np.clip(p[:, 4], 0, 1) * 0.5)
-    t = np.clip(buf, 0, 1)[..., None]
-    img += t * (hot * t + other * (1 - t))
+    _shade(img, buf, hot, other)
 
 
 def _floor(img, m, dt, size, hot, other):
     horizon = N * 0.42
-    phase = m['beat/phase'] % 1.0 if _locked(m) else (0.7 * m['clock/bass']) % 1.0
+    phase = _beats(m) % 1.0
     below = _Y < horizon
     light = 0.45 + 0.55 * m['beat/pulse']
     for k in range(1, 11):  # a line a beat comes towards you: far ones near the horizon, close ones at the bottom
@@ -703,7 +703,7 @@ def _floor(img, m, dt, size, hot, other):
 
 
 def _scope(img, m, dt, size, hot, other):
-    b = np.array([_v('band/%d' % k) for k in range(10)], np.float32)
+    b = _bands()
     x = np.arange(N * 4, dtype=np.float32) / 4
     clocks = (m['clock/bass'],) * 3 + (m['clock/mid'],) * 4 + (m['clock/treb'],) * 3
     y = np.zeros_like(x)
@@ -713,8 +713,7 @@ def _scope(img, m, dt, size, hot, other):
     buf = np.zeros((N, N), np.float32)
     for d, w in ((0, 0.5), (1, 0.2), (-1, 0.2)):
         _plot(buf, x, y + d, np.float32(w))
-    t = np.clip(buf, 0, 1)[..., None]
-    img += t * (hot * t + other * (1 - t))
+    _shade(img, buf, hot, other)
 
 
 def _tick(key, m, div=1):
@@ -735,8 +734,35 @@ def _tick(key, m, div=1):
     return last is not None and now != last
 
 
+def _beats(m, rate=0.7, clock='clock/bass'):
+    # beats so far, the fraction being the phase; without a tempo a clock at this rate, so that nothing stops
+    return m['beat/count'] + m['beat/phase'] % 1.0 if _locked(m) else rate * m[clock]
+
+
 def _bands():
     return np.clip(np.array([_v('band/%d' % k) for k in range(10)], np.float32), 0, 1)
+
+
+def _chroma():
+    # the twelve notes from C, the strongest 1
+    c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
+    return c / max(float(c.max()), 1e-3)
+
+
+def _ink(buf, xs, ys, w=1.0):
+    # light set at cells, not added: a line is as bright however many of its points land on one cell
+    xs, ys, w = (a.ravel() for a in np.broadcast_arrays(xs, ys, np.asarray(w, np.float32)))
+    keep = (xs >= 0) & (xs < N) & (ys >= 0) & (ys < N)
+    np.maximum.at(buf, (ys[keep].astype(np.intp), xs[keep].astype(np.intp)), w[keep])
+
+
+def _line(buf, x0, y0, x1, y1, w=1.0, n=None):
+    # straight lines, one or arrays of them; `n` points along each, or as many as it takes
+    x0, y0, x1, y1 = (np.atleast_1d(np.asarray(a, np.float32)) for a in (x0, y0, x1, y1))
+    if x0.size:
+        n = n or min(200, int(1.5 * max(float(np.abs(x1 - x0).max()), float(np.abs(y1 - y0).max()))) + 2)
+        t = np.linspace(0, 1, n, dtype=np.float32)[:, None]
+        _ink(buf, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, w)
 
 
 def _shade(img, buf, hot, other):
@@ -750,7 +776,7 @@ def _tunnel(img, m, dt, size, hot, other):
     c, s = math.cos(a), math.sin(a)
     x, y = _X - N / 2, _Y - N / 2
     r = np.maximum(np.abs(c * x + s * y), np.abs(c * y - s * x))
-    phase = m['beat/phase'] % 1.0 if _locked(m) else (0.7 * m['clock/bass']) % 1.0
+    phase = _beats(m) % 1.0
     count = int(m['beat/count'])
     light = 0.45 + 0.55 * m['beat/pulse']
     for k in range(9):
@@ -812,8 +838,7 @@ def _flow(img, m, dt, size, hot, other):
 
 
 def _wheel(img, m, dt, size, hot, other):
-    c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
-    c = c / max(float(c.max()), 1e-3)
+    c = _chroma()
     root = int(_v('key/root', -1))
     ang = 2 * math.pi * np.arange(12, dtype=np.float32) / 12 + 0.15 * m['clock/mid']
     r0 = N * 0.11 * size * (1 + 0.25 * m['beat/pulse'])
@@ -965,11 +990,14 @@ def draw(dt):
     # the layer as an N x N x 4 float picture (light, and its alpha)
     kind = KINDS[int(round(_v('fx/gen/kind', raw=True))) % len(KINDS)]  # (eased, it would pass through the ones between)
     if kind != S['kind']:  # another element: it starts from nothing
-        S.update(kind=kind, rings=[], sparks=np.zeros((0, 5), np.float32), caps=np.zeros(10, np.float32), own=dict())
+        S.update(kind=kind, rings=[], sparks=np.zeros((0, 5), np.float32), caps=np.zeros(10, np.float32), own=dict(), colours=None)
         S['trail'][:] = 0
     m = dict((name, _v(name)) for name in MUSIC)
     img = np.zeros((N, N, 3), np.float32)
-    hot, other = _colours()
+    now = S['t'] or 0.0
+    if S['colours'] is None or now - S['read'] > 0.5:  # (they change with the world, not with the frame)
+        S.update(colours=_colours(), read=now)
+    hot, other = S['colours']
     GENS[kind](img, m, dt, max(0.3, _v('fx/gen/size', 1.0)), hot, other)
     rgb = np.clip(img, 0, 1)
     space = _v('fx/gen/space')
@@ -992,8 +1020,7 @@ def onCook(scriptOp):
     now = time.perf_counter()
     dt = min(0.1, now - S['t']) if S['t'] else 1 / 60
     S['t'] = now
-    out = (draw(dt) * 255).astype(np.uint8).repeat(SCALE, 0).repeat(SCALE, 1)
-    scriptOp.copyNumpyArray(np.ascontiguousarray(out))
+    scriptOp.copyNumpyArray((draw(dt) * 255).astype(np.uint8))
 '''
 
 API = '''# ep visual's API for the MCP server (tdfx.TDApi in teenage_mcp): POST /exec runs Python here, GET /frame.jpg
@@ -1184,13 +1211,16 @@ def build(parent=None):
     tex = _node(comp, scriptTOP, 'frames_tex', (0, 250), callbacks=tex_cb.path)
     web = _node(comp, webrenderTOP, 'canvas', (0, 0), url=f'{PAGE}td.html?paper={PAPER}', outputresolution=('custom',),
                 resolutionw=1000, resolutionh=1000, audio=('off',), active=SOURCE == 'webrender')
-    src = _node(comp, crossTOP, 'source', (150, 100), inputs=(tex, web), cross=0 if SOURCE == 'websocket' else 1, **RES)
+    src = _node(comp, crossTOP, 'source', (150, 100), inputs=(_big(comp, tex, 'frames_big', (75, 250)), web),
+                cross=0 if SOURCE == 'websocket' else 1, **RES)
 
     v = f"op('{module.path}').module.v"
     for i, (name, make) in enumerate(STAGES):
         x = 300 + 300 * i
         wet = make(comp, src, x, v)
-        src = _node(comp, crossTOP, name, (x, 0), inputs=(src, wet), cross=E(f"{v}('fx/{name}')"), **RES)
+        mix = _node(comp, crossTOP, name, (x, 0), inputs=(src, wet), cross=E(f"{v}('fx/{name}')"), **RES)
+        # a Cross TOP cooks both its inputs whatever its mix: a Switch TOP cooks only the one it shows, so what is off is free
+        src = _node(comp, switchTOP, f'{name}_on', (x + 120, 0), inputs=(src, mix), index=E(f"1 if {v}('fx/{name}') > 0.001 else 0"))
     x = 300 + 300 * len(STAGES)
     out = _node(comp, nullTOP, 'out', (x, 0), inputs=(src,))
 

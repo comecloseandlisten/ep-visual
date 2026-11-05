@@ -255,7 +255,7 @@ def _cell_cyclic(img, m, dt, size, hot, other):
         own['s'] = s
     if _tick('cyclic', m, 3):
         own['s'] = step(own['s'])
-    c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
+    c = _chroma()
     c = np.clip((c - c.mean()) / max(float(c.max() - c.mean()), 1e-3), 0, 1)
     if not c.any():
         c = (np.arange(12) % 4 == 0).astype(np.float32)
@@ -460,7 +460,7 @@ def _cell_quilt(img, m, dt, size, hot, other):
     if _tick('quilt', m):
         c = np.roll(c, 1, 0) ^ np.roll(c, -1, 0) ^ np.roll(c, 1, 1) ^ np.roll(c, -1, 1)
         if not c.any():
-            notes = np.argsort([-_v('chroma/%d' % k) for k in range(12)])[:4]
+            notes = np.argsort(-_chroma())[:4]
             for k in notes:
                 x, y = 1 + int(k) % 4, 1 + int(k) // 4
                 for a, b in ((x, y), (-x, y), (x, -y), (-x, -y)):
@@ -546,7 +546,7 @@ def _cell_clones(img, m, dt, size, hot, other):
         lab[r < 3] = (((a[r < 3] + math.pi) / (2 * math.pi) * 12).astype(np.int8)) % 12
         own.update(lab=lab, born=np.zeros((g, g), np.float32), n=0, dish=r < min(g / 2 - 1, 23 * size))
     lab = own['lab']
-    c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
+    c = _chroma()
     c = np.clip(c / max(float(c.max()), 1e-3), 0, 1)
     if _tick('clones', m, 4):
         own['n'] += 1

@@ -39,7 +39,7 @@ export class LightShow {
     Object.assign(this, { on: true, auto: true, flash: 0, strobe: 0, invert: 0, punch: 0, split: 0, mosaic: 0, noise: 0, vig: 0, roll: -1, trails: 0,
       swap: 0, freeze: 0, rewind: -1, rewindAt: 0, frozen: null, ring: [], head: 0, gel: { a: 0, c: 0 }, vertigo: 0, flashAt: -1, eighth: -1, down: 0, downHeard: false,
       beam: { x: 0, dir: 1, a: 0, last: 0 }, spot: { x: 0.5, y: 0.5, r: 0.2, a: 0 }, leak: { x: 0.9, y: 0.1, tx: 0.9, ty: 0.1, a: 0 },
-      w: {}, prev: null, copy: null, active: [], sheets: {}, mode: 'cells', held: null, past: false, enabled: Object.fromEntries(EFFECTS.map(([k]) => [k, true])) });
+      w: {}, prev: null, copy: null, active: [], sheets: {}, grain: null, mode: 'cells', held: null, past: false, enabled: Object.fromEntries(EFFECTS.map(([k]) => [k, true])) });
   }
 
   // an effect switched on or off from the toolbar; off also puts out whatever of it is still showing
@@ -350,7 +350,7 @@ export class LightShow {
     }
     if (doFlash) wash(`rgba(255,255,255,${flash})`);
     if (this.noise > 0) { // static, right after a drop
-      const n = this.sheet('noise', 125), px = n.createImageData(125, 125), d = px.data;
+      const n = this.sheet('noise', 125), px = (this.grain ||= n.createImageData(125, 125)), d = px.data;
       for (let i = 0; i < d.length; i += 4) { d[i] = d[i + 1] = d[i + 2] = Math.random() * 255; d[i + 3] = Math.random() < 0.26 ? 255 : 0; }
       n.putImageData(px, 0, 0);
       ctx.drawImage(n.canvas, 0, 0, S, S);

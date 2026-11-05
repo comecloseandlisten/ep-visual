@@ -22,47 +22,22 @@ _SIG_R = np.hypot(_SIG_DX, _SIG_DY)
 _SIG_A = np.arctan2(_SIG_DY, _SIG_DX)
 
 
-def _sig_pos(m):
-    # where we are, in beats: by the tempo, by the mids' clock where there is none
-    return m['beat/count'] + m['beat/phase'] % 1.0 if _locked(m) else 2.0 * m['clock/mid']
-
-
 def _sig_bar(m):
     # where we are in the bar, 0..1
     bar = _v('bar/phase', -1.0)
-    return bar % 1.0 if _locked(m) and bar >= 0 else (_sig_pos(m) / 4) % 1.0
-
-
-def _sig_chroma():
-    c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
-    return c / max(float(c.max()), 1e-3)
-
-
-def _sig_pen(buf, xs, ys, w=1.0):
-    # a line's cells at w, however many samples land on a cell
-    xs, ys, w = (a.ravel() for a in np.broadcast_arrays(xs, ys, np.asarray(w, np.float32)))
-    keep = (xs >= 0) & (xs < N) & (ys >= 0) & (ys < N)
-    np.maximum.at(buf, (ys[keep].astype(np.intp), xs[keep].astype(np.intp)), w[keep])
-
-
-def _sig_seg(buf, x0, y0, x1, y1, w=1.0):
-    # straight lines, one or an array of them
-    x0, y0, x1, y1 = (np.atleast_1d(np.asarray(a, np.float32)) for a in (x0, y0, x1, y1))
-    n = int(1.5 * max(float(np.abs(x1 - x0).max()), float(np.abs(y1 - y0).max()))) + 2
-    t = np.linspace(0, 1, n, dtype=np.float32)[:, None]
-    _sig_pen(buf, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, w)
+    return bar % 1.0 if _locked(m) and bar >= 0 else (_beats(m, 2.0, 'clock/mid') / 4) % 1.0
 
 
 def _sig_dot(buf, xs, ys, r=1, w=1.0):
     # squares of 2r + 1 cells
     d = np.arange(-r, r + 1, dtype=np.float32)
     dy, dx = (a.ravel() for a in np.meshgrid(d, d))
-    _sig_pen(buf, np.ravel(xs)[:, None] + dx, np.ravel(ys)[:, None] + dy, np.ravel(np.asarray(w, np.float32))[:, None])
+    _ink(buf, np.ravel(xs)[:, None] + dx, np.ravel(ys)[:, None] + dy, np.ravel(np.asarray(w, np.float32))[:, None])
 
 
 def _sig_circle(buf, r, w=1.0):
     a = np.linspace(0, 2 * math.pi, int(8 * r) + 16, dtype=np.float32)
-    _sig_pen(buf, N / 2 + r * np.cos(a), N / 2 + r * np.sin(a), w)
+    _ink(buf, N / 2 + r * np.cos(a), N / 2 + r * np.sin(a), w)
 
 
 def _sig_two(img, frame, signal, hot, other):
@@ -96,7 +71,7 @@ def _sig_ladder(img, m, dt, size, hot, other):
     # the twelve notes as rungs going away from the key's own note, each lit as far out as it sounds; a rider on the loudest
     own = S['own']
     root = max(0, int(_v('key/root', -1)))
-    c = np.roll(_sig_chroma(), -root)
+    c = np.roll(_chroma(), -root)
     if 'c' not in own:
         own.update(c=c, y=N / 2)
     own['c'] = c = np.maximum(c, own['c'] * math.exp(-dt / 0.25))
@@ -106,12 +81,12 @@ def _sig_ladder(img, m, dt, size, hot, other):
     x = N / 2 + 2.5 * t * np.sin(0.5 * m['clock/mid'] + 3 * t)  # it sways a little, more at the far end
     frame, signal = np.zeros((N, N), np.float32), np.zeros((N, N), np.float32)
     thick = (1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0)
-    _sig_seg(frame, x[:-1] - half[:-1], y[:-1], x[1:] - half[1:], y[1:], 0.75)
-    _sig_seg(frame, x[:-1] + half[:-1], y[:-1], x[1:] + half[1:], y[1:], 0.75)
+    _line(frame, x[:-1] - half[:-1], y[:-1], x[1:] - half[1:], y[1:], 0.75)
+    _line(frame, x[:-1] + half[:-1], y[:-1], x[1:] + half[1:], y[1:], 0.75)
     for k in range(12):
         for d in range(thick[k] + 1):
-            _sig_seg(frame, x[k] - half[k], y[k] + d, x[k] + half[k], y[k] + d, 0.16)
-            _sig_seg(signal, x[k] - half[k] * c[k], y[k] + d, x[k] + half[k] * c[k], y[k] + d, 0.25 + 0.75 * c[k])
+            _line(frame, x[k] - half[k], y[k] + d, x[k] + half[k], y[k] + d, 0.16)
+            _line(signal, x[k] - half[k] * c[k], y[k] + d, x[k] + half[k] * c[k], y[k] + d, 0.25 + 0.75 * c[k])
     top = int(np.argmax(c))
     own['y'] += (float(y[top]) - own['y']) * (1 - math.exp(-dt / 0.07))
     f = (own['y'] - y[0]) / max(1.0, float(y[-1] - y[0]))
@@ -124,7 +99,7 @@ def _sig_ladder(img, m, dt, size, hot, other):
 def _sig_roll(img, m, dt, size, hot, other):
     # a piano roll going left: a row for each note, a column every 32nd, the keys at the right edge lit as they sound
     own = S['own']
-    c = _sig_chroma()
+    c = _chroma()
     if 'notes' not in own:
         h = N / 12.0
         row = np.minimum(11, (_Y[:, 0] / h).astype(int))
@@ -159,7 +134,7 @@ def _sig_seq(img, m, dt, size, hot, other):
         own.update(to=np.full(16, 0.5, np.float32), at=np.full(16, 0.5, np.float32), step=0, lamp=np.zeros(16, np.float32))
     if _tick('step', m, 4):
         own['step'] = int(_sig_bar(m) * 16) % 16 if _locked(m) else (own['step'] + 1) % 16
-        note = int(np.argmax(_sig_chroma() + rng.uniform(0, 0.08, 12)))  # (one of the loudest)
+        note = int(np.argmax(_chroma() + rng.uniform(0, 0.08, 12)))  # (one of the loudest)
         own['to'][own['step']] = (((note - max(0, int(_v('key/root', -1)))) % 12) + 0.5) / 12
         own['lamp'][own['step']] = 1.0
     own['at'] += (own['to'] - own['at']) * (1 - math.exp(-dt / 0.05))
@@ -185,7 +160,7 @@ def _sig_seq(img, m, dt, size, hot, other):
     signal = signal + foot * inside[None, :] * lamp[col][None, :]
     line = np.zeros((N, N), np.float32)
     xc = x0 + (np.arange(16, dtype=np.float32) + 0.5) * pitch - 0.75
-    _sig_seg(line, xc[:-1], y[:-1], xc[1:], y[1:], 0.45)
+    _line(line, xc[:-1], y[:-1], xc[1:], y[1:], 0.45)
     _sig_two(img, frame, signal + line, hot, other)
 
 
@@ -206,18 +181,18 @@ def _sig_needles(img, m, dt, size, hot, other):
     for i, sign in enumerate((-1, 1)):
         cx = N / 2 + sign * (hw + 2)
         py = y0 - 0.28 * hh
-        _sig_seg(frame, (cx - hw, cx + hw, cx - hw, cx - hw), (y0, y0, y1, y0), (cx + hw, cx + hw, cx + hw, cx - hw), (y0, y1, y1, y1), 0.55)
+        _line(frame, (cx - hw, cx + hw, cx - hw, cx - hw), (y0, y0, y1, y0), (cx + hw, cx + hw, cx + hw, cx - hw), (y0, y1, y1, y1), 0.55)
         a = np.linspace(-0.72, 0.72, 90, dtype=np.float32)
-        _sig_pen(frame, cx + ra * np.sin(a[:62]), py + ra * np.cos(a[:62]), 0.8)
+        _ink(frame, cx + ra * np.sin(a[:62]), py + ra * np.cos(a[:62]), 0.8)
         for d in (0, -1):  # the red end, thicker
-            _sig_pen(signal, cx + (ra + d) * np.sin(a[62:]), py + (ra + d) * np.cos(a[62:]), 0.9)
+            _ink(signal, cx + (ra + d) * np.sin(a[62:]), py + (ra + d) * np.cos(a[62:]), 0.9)
         k = np.linspace(-0.72, 0.72, 9, dtype=np.float32)
         l = np.where(np.arange(9) % 2, 2.5, 4.5).astype(np.float32)
-        _sig_seg(frame, cx + ra * np.sin(k), py + ra * np.cos(k), cx + (ra + l) * np.sin(k), py + (ra + l) * np.cos(k), 0.8)
+        _line(frame, cx + ra * np.sin(k), py + ra * np.cos(k), cx + (ra + l) * np.sin(k), py + (ra + l) * np.cos(k), 0.8)
         angle = (float(own['x'][i]) - 0.5) * 1.44
         s, c = math.sin(angle), math.cos(angle)
         r0 = (y0 + 2 - py) / max(c, 0.3)
-        _sig_seg(signal, cx + r0 * s, py + r0 * c, cx + (ra + 3) * s, py + (ra + 3) * c, 1.0)
+        _line(signal, cx + r0 * s, py + r0 * c, cx + (ra + 3) * s, py + (ra + 3) * c, 1.0)
         _sig_dot(frame, cx, y0 + 2, 2, 0.7)
         if own['x'][i] > 0.8:  # the peak lamp
             _sig_dot(signal, cx + hw - 5, y1 - 5, 1, 1.0)
@@ -228,28 +203,28 @@ def _sig_needles(img, m, dt, size, hot, other):
 def _sig_metro(img, m, dt, size, hot, other):
     # a metronome: the arm reaches an end on every beat, leaving a wake; its weight slides down the faster the tempo
     _trail(dt, 0.14)
-    pos = _sig_pos(m)
+    pos = _beats(m, 2.0, 'clock/mid')
     s = size
     px, py = N / 2, N / 2 - 0.3 * N * s
     length = 0.62 * N * s
     a = 0.42 * math.cos(math.pi * pos)
     sa, ca = math.sin(a), math.cos(a)
-    _sig_seg(S['trail'], px, py, px + length * sa, py + length * ca, 0.55)
+    _line(S['trail'], px, py, px + length * sa, py + length * ca, 0.55)
     frame, signal = np.zeros((N, N), np.float32), np.zeros((N, N), np.float32)
     bw, tw, top = 0.33 * N * s, 0.09 * N * s, py + 0.72 * N * s  # the housing
     yb = py - 0.07 * N * s
-    _sig_seg(frame, (px - bw, px + bw, px - bw, px + tw), (yb, yb, yb, top), (px + bw, px + bw - 0, px - tw, px + bw),
+    _line(frame, (px - bw, px + bw, px - bw, px + tw), (yb, yb, yb, top), (px + bw, px + bw - 0, px - tw, px + bw),
              (yb, yb, top, yb), 0.7)
-    _sig_seg(frame, px - tw, top, px + tw, top, 0.7)
+    _line(frame, px - tw, top, px + tw, top, 0.7)
     k = np.linspace(-0.42, 0.42, 9, dtype=np.float32)  # its scale, behind the arm
     r = 0.42 * N * s
-    _sig_seg(frame, px + r * np.sin(k), py + r * np.cos(k), px + (r + 3 + 2 * (np.arange(9) % 2 == 0)) * np.sin(k),
+    _line(frame, px + r * np.sin(k), py + r * np.cos(k), px + (r + 3 + 2 * (np.arange(9) % 2 == 0)) * np.sin(k),
              py + (r + 3 + 2 * (np.arange(9) % 2 == 0)) * np.cos(k), 0.55)
-    _sig_seg(signal, px, py, px + length * sa, py + length * ca, 1.0)
+    _line(signal, px, py, px + length * sa, py + length * ca, 1.0)
     bpm = m['bpm'] if m['bpm'] > 0 else 100.0
     w = (0.92 - 0.55 * min(1.0, max(0.0, (bpm - 60) / 120))) * length
-    _sig_seg(signal, px + w * sa - 4 * ca, py + w * ca + 4 * sa, px + w * sa + 4 * ca, py + w * ca - 4 * sa, 1.0)
-    _sig_seg(signal, px + (w + 1.5) * sa - 3 * ca, py + (w + 1.5) * ca + 3 * sa, px + (w + 1.5) * sa + 3 * ca,
+    _line(signal, px + w * sa - 4 * ca, py + w * ca + 4 * sa, px + w * sa + 4 * ca, py + w * ca - 4 * sa, 1.0)
+    _line(signal, px + (w + 1.5) * sa - 3 * ca, py + (w + 1.5) * ca + 3 * sa, px + (w + 1.5) * sa + 3 * ca,
              py + (w + 1.5) * ca - 3 * sa, 1.0)
     click = math.exp(-5 * (pos % 1.0))  # a lamp at the end it just reached
     side = 1 if int(pos) % 2 == 0 else -1
@@ -265,7 +240,7 @@ def _sig_fifths(img, m, dt, size, hot, other):
     own = S['own']
     root = int(_v('key/root', -1))
     major = _v('key/major') > 0.5
-    c = _sig_chroma()[(np.arange(12) * 7) % 12]  # position i holds the note i fifths up
+    c = _chroma()[(np.arange(12) * 7) % 12]  # position i holds the note i fifths up
     if 'c' not in own:
         own.update(c=c, turn=0.0)
     own['c'] = c = own['c'] + (c - own['c']) * (1 - math.exp(-dt / 0.08))
@@ -289,7 +264,7 @@ def _sig_fifths(img, m, dt, size, hot, other):
         hub = _SIG_R < N * 0.08 * size if major else np.abs(_SIG_R - N * 0.08 * size) < 1.2
         signal = signal + hub * 0.8
     pin = np.zeros((N, N), np.float32)  # the fixed mark the key comes up to
-    _sig_seg(pin, N / 2, N / 2 + N * 0.47 * size, N / 2, N / 2 + N * 0.44 * size, 1.0)
+    _line(pin, N / 2, N / 2 + N * 0.47 * size, N / 2, N / 2 + N * 0.44 * size, 1.0)
     _sig_two(img, frame, signal + pin, hot, other)
 
 
@@ -311,15 +286,15 @@ def _sig_clock(img, m, dt, size, hot, other):
     k = np.arange(16, dtype=np.float32)
     a = math.pi / 2 - k * math.pi / 8
     l = np.where(k % 4 == 0, 7.0, 3.0).astype(np.float32)
-    _sig_seg(frame, N / 2 + (r - l) * np.cos(a), N / 2 + (r - l) * np.sin(a), N / 2 + r * np.cos(a), N / 2 + r * np.sin(a), 0.8)
+    _line(frame, N / 2 + (r - l) * np.cos(a), N / 2 + (r - l) * np.sin(a), N / 2 + r * np.cos(a), N / 2 + r * np.sin(a), 0.8)
     fill = (u < bar) & (_SIG_R < r - 9) & (_SIG_R > 6) & (q > 0.015) & (q < 0.985)
     hatch = (_SIG_R % 4.0) < 2.0  # rings, so it reads as filling, not a flat slice
     frame = frame + fill * hatch * (0.2 + 0.5 * (1 - (bar - u)))
     ang = math.pi / 2 - 2 * math.pi * bar
-    _sig_seg(signal, N / 2, N / 2, N / 2 + (r - 1) * math.cos(ang), N / 2 + (r - 1) * math.sin(ang), 1.0)
+    _line(signal, N / 2, N / 2, N / 2 + (r - 1) * math.cos(ang), N / 2 + (r - 1) * math.sin(ang), 1.0)
     phrase = math.pi / 2 - 2 * math.pi * ((own['bars'] % 4) + bar) / 4
     for d in (-1, 0, 1):
-        _sig_seg(signal, N / 2 + d, N / 2, N / 2 + d + 0.5 * r * math.cos(phrase), N / 2 + 0.5 * r * math.sin(phrase), 0.8)
+        _line(signal, N / 2 + d, N / 2, N / 2 + d + 0.5 * r * math.cos(phrase), N / 2 + 0.5 * r * math.sin(phrase), 0.8)
     b = np.arange(4, dtype=np.float32)
     a = math.pi / 2 - b * math.pi / 2  # a lamp for each beat gone by
     _sig_dot(signal, N / 2 + (r + 5) * np.cos(a), N / 2 + (r + 5) * np.sin(a), 1, np.where(b <= int(bar * 4), 1.0, 0.0))
@@ -359,11 +334,11 @@ def _sig_cymbal(img, m, dt, size, hot, other):
     ang, rad = rng.uniform(0, 2 * math.pi, n), big * np.sqrt(rng.uniform(0.04, 1, n))
     gx, gy = rad * np.cos(ang), 0.34 * rad * np.sin(ang)
     glint = np.zeros((N, N), np.float32)
-    _sig_pen(glint, cx + gx * ca - gy * sa, cy + gx * sa + gy * ca, 1.0)
+    _ink(glint, cx + gx * ca - gy * sa, cy + gx * sa + gy * ca, 1.0)
     pole = np.zeros((N, N), np.float32)
-    _sig_seg(pole, cx, cy, cx, 0, 0.6)
-    _sig_seg(pole, cx + 1, cy, cx + 1, 0, 0.6)
-    _sig_seg(pole, cx - sa * 7, cy + ca * 7, cx, cy, 0.9)
+    _line(pole, cx, cy, cx, 0, 0.6)
+    _line(pole, cx + 1, cy, cx + 1, 0, 0.6)
+    _line(pole, cx - sa * 7, cy + ca * 7, cx, cy, 0.9)
     _sig_two(img, frame + pole * (~disc), signal + glint, hot, other)
 
 
@@ -424,8 +399,8 @@ def _sig_vector(img, m, dt, size, hot, other):
     _plot(S['trail'], N / 2 + x[keep], N / 2 + y[keep], np.float32(0.2))
     frame = np.zeros((N, N), np.float32)
     c = N / 2
-    _sig_seg(frame, (c - d, c, c + d, c), (c, c + d, c, c - d), (c, c + d, c, c - d), (c + d, c, c - d, c), 0.75)
-    _sig_seg(frame, (c - d, c), (c, c - d), (c + d, c), (c, c + d), 0.22)
+    _line(frame, (c - d, c, c + d, c), (c, c + d, c, c - d), (c, c + d, c, c - d), (c + d, c, c - d, c), 0.75)
+    _line(frame, (c - d, c), (c, c - d), (c + d, c), (c, c + d), 0.22)
     t = np.clip(S['trail'], 0, 1)
     _sig_two(img, frame + t * 0.5, t * t * 1.2, hot, other)
 
@@ -435,7 +410,7 @@ def _sig_chord(img, m, dt, size, hot, other):
     # twelve pins on a ring and a line strung through the loudest; it moves on the beat, its old shapes fading behind it
     own = S['own']
     _trail(dt, 0.8)
-    c = _sig_chroma()
+    c = _chroma()
     if 'to' not in own:
         own.update(to=np.arange(0, 12, 3, dtype=np.float32), at=np.arange(0, 12, 3, dtype=np.float32), c=c)
     own['c'] = own['c'] + (c - own['c']) * (1 - math.exp(-dt / 0.1))
@@ -449,10 +424,10 @@ def _sig_chord(img, m, dt, size, hot, other):
     r = 0.42 * N * size
     a = own['at'] * math.pi / 6 + turn
     x, y = N / 2 + r * np.cos(a), N / 2 + r * np.sin(a)
-    _sig_seg(S['trail'], x, y, np.roll(x, -1), np.roll(y, -1), 0.6)
+    _line(S['trail'], x, y, np.roll(x, -1), np.roll(y, -1), 0.6)
     line = np.zeros((N, N), np.float32)
-    _sig_seg(line, x, y, np.roll(x, -1), np.roll(y, -1), 1.0)
-    _sig_seg(line, x, y, np.roll(x, -2), np.roll(y, -2), 0.5)
+    _line(line, x, y, np.roll(x, -1), np.roll(y, -1), 1.0)
+    _line(line, x, y, np.roll(x, -2), np.roll(y, -2), 0.5)
     frame, pins = np.zeros((N, N), np.float32), np.zeros((N, N), np.float32)
     p = np.arange(12, dtype=np.float32) * math.pi / 6 + turn
     px, py = N / 2 + (r + 4) * np.cos(p), N / 2 + (r + 4) * np.sin(p)
@@ -472,7 +447,7 @@ def _sig_comb(img, m, dt, size, hot, other):
         own.update(o=root / 12.0, l=np.zeros(16, np.float32))
     own['o'] += (root / 12.0 - own['o']) * (1 - math.exp(-dt / 0.3))
     n = np.arange(1, 17, dtype=np.float32)
-    c = _sig_chroma()[(root + np.round(12 * np.log2(n)).astype(int)) % 12]
+    c = _chroma()[(root + np.round(12 * np.log2(n)).astype(int)) % 12]
     want = (0.12 + 0.88 * c ** 1.5) / n ** 0.22
     own['l'] += (want - own['l']) * (1 - math.exp(-dt / 0.09))
     width, spine = 0.84 * N * size, N / 2 + 0.34 * N * size
@@ -482,11 +457,11 @@ def _sig_comb(img, m, dt, size, hot, other):
     shake = (0.6 + 4 * _v('drive/mid', m['level'] * 0.5)) * t ** 2 * np.sin(m['clock/mid'] * (5 + 1.3 * n) + n)
     frame, signal = np.zeros((N, N), np.float32), np.zeros((N, N), np.float32)
     xs, ys = x + shake, spine - length * t
-    _sig_pen(signal, xs, ys, 0.35 + 0.65 * c)
-    _sig_pen(signal, xs[:, :6] + 1, ys[:, :6], 0.35 + 0.65 * c[:6])  # (the lowest are the thickest)
+    _ink(signal, xs, ys, 0.35 + 0.65 * c)
+    _ink(signal, xs[:, :6] + 1, ys[:, :6], 0.35 + 0.65 * c[:6])  # (the lowest are the thickest)
     _sig_dot(signal, xs[-1], ys[-1], 1, 0.4 + 0.6 * c)
     for d in range(3):
-        _sig_seg(frame, N / 2 - width / 2, spine + d, N / 2 + width / 2, spine + d, 0.85)
+        _line(frame, N / 2 - width / 2, spine + d, N / 2 + width / 2, spine + d, 0.85)
     _sig_two(img, frame, signal, hot, other)
 
 
@@ -495,7 +470,7 @@ def _sig_ruler(img, m, dt, size, hot, other):
     # two rulers sliding opposite ways, marks closer the faster the tempo: their beats meet at the cursor. The top one is cut
     # in sixteenths with bars, the lower in triplets
     own = S['own']
-    pos = _sig_pos(m)
+    pos = _beats(m, 2.0, 'clock/mid')
     bpm = min(200.0, max(60.0, m['bpm'] if m['bpm'] > 0 else 100.0))
     want = 0.21 * N * size * 120 / bpm
     own['pb'] = pb = own.get('pb', want) + (want - own.get('pb', want)) * (1 - math.exp(-dt / 0.3))
@@ -518,8 +493,8 @@ def _sig_ruler(img, m, dt, size, hot, other):
     click = math.exp(-5 * (pos % 1.0))
     signal = (hi | lo) * near[None, :] * (np.abs(x) < 4 + 7 * click)[None, :]  # marks at the cursor
     cursor = np.zeros((N, N), np.float32)
-    _sig_seg(cursor, N / 2, bot - 5, N / 2, top + 5, 0.5 + 0.5 * click)
-    _sig_seg(cursor, N / 2 + 1, bot - 5, N / 2 + 1, top + 5, 0.5 + 0.5 * click)
+    _line(cursor, N / 2, bot - 5, N / 2, top + 5, 0.5 + 0.5 * click)
+    _line(cursor, N / 2 + 1, bot - 5, N / 2 + 1, top + 5, 0.5 + 0.5 * click)
     _sig_two(img, frame, signal + cursor, hot, other)
 
 
@@ -611,11 +586,11 @@ def _sig_bins(img, m, dt, size, hot, other):
     fresh = rows > n[col][None, :] - 1.5  # the top of each stack, what came in last
     frame = frame + filled * 0.8
     signal = signal + filled * fresh
-    _sig_seg(frame, x0, foot - 2, x0 + k * p, foot - 2, 0.8)
+    _line(frame, x0, foot - 2, x0 + k * p, foot - 2, 0.8)
     i = np.arange(7, dtype=np.float32)
     for r in range(5):  # the pegs, fanning out under the top
         px_ = N / 2 + (i[:r + 2] - (r + 1) / 2) * 9 * (1 + 0.5 * r)
-        _sig_pen(frame, px_, np.full(r + 2, top - 5 - 7 * r * -0.0 - 6.0 * r, np.float32), 0.6)
+        _ink(frame, px_, np.full(r + 2, top - 5 - 7 * r * -0.0 - 6.0 * r, np.float32), 0.6)
     _sig_dot(signal, x0 + (place * (k - 1) + 0.4) * p, foot - 5, 1, 0.9)
     _sig_two(img, frame, signal, hot, other)
 
@@ -651,13 +626,13 @@ def _sig_groove(img, m, dt, size, hot, other):
     a = 0.6 + age * (2 * math.pi / per)
     x, y = N / 2 + r * np.cos(a), N / 2 + r * np.sin(a)
     frame, signal = np.zeros((N, N), np.float32), np.zeros((N, N), np.float32)
-    _sig_pen(frame, x, y, 0.3 + 0.5 * (1 - age / total))
+    _ink(frame, x, y, 0.3 + 0.5 * (1 - age / total))
     deep = cut > 0.45
-    _sig_pen(signal, x[deep], y[deep], (cut[deep] * (1 - 0.7 * age[deep] / total)))
+    _ink(signal, x[deep], y[deep], (cut[deep] * (1 - 0.7 * age[deep] / total)))
     _sig_circle(frame, 0.06 * N * size, 0.8)
     _sig_dot(signal, N / 2, N / 2, 1, 1.0)
     hx, hy = N / 2 + outer * math.cos(0.6), N / 2 + outer * math.sin(0.6)  # the cutter
-    _sig_seg(signal, hx, hy, N, N - 6, 0.8)
+    _line(signal, hx, hy, N, N - 6, 0.8)
     _sig_dot(signal, hx, hy, 1, 1.0)
     _sig_two(img, frame, signal, hot, other)
 
@@ -683,12 +658,12 @@ def _sig_strings(img, m, dt, size, hot, other):
         blur = np.abs(_Y - y0) < env[None, :]
         frame += blur * on[None, :] * (0.16 + 0.34 * (1 - np.abs(_Y - y0) / np.maximum(env, 1)[None, :]))
         for d in range(2 if k < 2 else 1):
-            _sig_pen(signal, xs, y + d, on * (0.55 + 0.45 * float(a[k])))
+            _ink(signal, xs, y + d, on * (0.55 + 0.45 * float(a[k])))
         if k == 0:
-            _sig_pen(signal, xs, y - 1, on * (0.55 + 0.45 * float(a[k])))
+            _ink(signal, xs, y - 1, on * (0.55 + 0.45 * float(a[k])))
     for x, w in ((x0, 3), (x1, 2)):
         for d in range(w):
-            _sig_seg(frame, x + d, N / 2 - 0.37 * N * s, x + d, N / 2 + 0.37 * N * s, 0.9)
+            _line(frame, x + d, N / 2 - 0.37 * N * s, x + d, N / 2 + 0.37 * N * s, 0.9)
     pegs = N / 2 + (np.arange(4, dtype=np.float32) - 1.5) * 0.22 * N * s
     _sig_dot(frame, np.full(4, x0 - 4, np.float32), pegs, 1, 0.7)
     _sig_two(img, frame, signal, hot, other)

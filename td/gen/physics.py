@@ -21,11 +21,6 @@
 _PHYS_MODES = ((1, 2), (2, 3), (1, 4), (3, 4), (2, 5), (1, 3), (3, 5), (4, 5), (2, 7), (1, 5), (3, 7), (4, 7))
 
 
-def _phys_beats(m):
-    # where the music is, in beats: the beat as read ahead, or the bass clock's pace where there is no tempo
-    return m['beat/count'] + m['beat/phase'] % 1.0 if _locked(m) else 1.6 * m['clock/bass']
-
-
 def _phys_fade(dt, tau):
     # the trail fades, and what is left of it goes dark for good
     _trail(dt, tau)
@@ -103,7 +98,7 @@ def _phys_cradle(img, m, dt, size, hot, other):
     # the swing is a half sine of the beat, so the ball lands on it; a glow runs through the row as the blow passes
     own = S['own']
     _phys_fade(dt, 0.12)
-    x = _phys_beats(m)
+    x = _beats(m, 1.6)
     p, side = x % 1.0, int(x) % 2
     kicks = _recent('kicks', max(m['hit/kick'], 0.8 * m['hit/bass']), m, dt)
     lift = max(kicks, 0.2 + 0.55 * m['drive/bass'])
@@ -139,7 +134,7 @@ def _phys_harp(img, m, dt, size, hot, other):
     own = S['own']
     if 'a' not in own:
         own.update(a=np.zeros(12, np.float32), ph=np.zeros(12, np.float32))
-    c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
+    c = _chroma()
     c = c / max(float(c.max()), 1e-3)
     if _tick('pluck', m, 2):
         own['a'] = np.maximum(own['a'], np.where(c > 0.45, c, 0))
@@ -176,7 +171,7 @@ def _phys_chladni(img, m, dt, size, hot, other):
     if 'p' not in own:
         own['p'] = rng.random((3200, 2)).astype(np.float32)
     if _tick('mode', m, 0.25) or 'nm' not in own:
-        c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
+        c = _chroma()
         own['nm'] = _PHYS_MODES[(int(c.argmax()) - max(0, int(_v('key/root', -1)))) % 12]
         own['sign'] = 1.0 if _v('key/major') > 0.5 else -1.0
     n, q = own['nm']
@@ -272,7 +267,7 @@ def _phys_balls(img, m, dt, size, hot, other):
     own = S['own']
     _phys_fade(dt, 0.16)
     every = np.array([2, 2, 2, 1, 1, 1, 1, 0.5, 0.5, 0.5], np.float32)
-    x = _phys_beats(m)
+    x = _beats(m, 1.6)
     leg = np.floor(x / every)
     if 'leg' not in own:
         own.update(leg=leg, up=_bands())
@@ -428,7 +423,7 @@ def _phys_fountain(img, m, dt, size, hot, other):
     jet = rng.integers(0, 3, n)
     drive = np.array([m['drive/bass'], _v('drive/mid', 0.4), m['drive/treb']], np.float32)
     tilt = 0.32 * np.sin(0.8 * m['clock/mid'] + np.array([0.0, 2.1, 4.2], np.float32))
-    swell = 1 + 0.13 * math.cos(2 * math.pi * _phys_beats(m))
+    swell = 1 + 0.13 * math.cos(2 * math.pi * _beats(m, 1.6))
     v0 = np.sqrt(2 * grav * N * 0.8 * size * (0.25 + 0.75 * drive)) * swell
     ang = tilt[jet] + rng.normal(0, 0.035, n)
     speed = v0[jet] * (1 + rng.normal(0, 0.018, n))
@@ -569,7 +564,7 @@ def _phys_sand(img, m, dt, size, hot, other):
         fill = float((g > 0).mean())
         if fill > 0.2:
             own['gap'] = True
-    bar = int(_phys_beats(m) / 4)
+    bar = int(_beats(m, 1.6) / 4)
     dense = min(1.0, 0.12 + 6 * m['busy'])
     tone = (0.95 if bar % 2 else 0.5) * (0.65 + 0.35 * min(1.0, m['level']))
     t = 0.5 * m['clock/mid']
@@ -642,7 +637,7 @@ def _phys_pendwave(img, m, dt, size, hot, other):
     _phys_fade(dt, 0.2)
     K = 20
     k = np.arange(K, dtype=np.float32)
-    x = _phys_beats(m)
+    x = _beats(m, 1.6)
     wide = N * 0.42 * size * (0.5 + 0.5 * min(1.0, m['level']))
     swing = np.cos(2 * math.pi * ((16 + k) * (x % 32.0) / 32.0))
     bx = N / 2 + wide * swing
@@ -699,7 +694,7 @@ def _phys_tube(img, m, dt, size, hot, other):
     if 'u' not in own:
         own.update(u=np.zeros(M, np.float32), v=np.zeros(M, np.float32))
     u, v = own['u'], own['v']
-    p = _phys_beats(m) % 1.0
+    p = _beats(m, 1.6) % 1.0
     far = N * (0.02 + 0.07 * min(1.0, m['drive/bass']))
     piston = far * min(1.0, p / 0.13) * (1 - p) ** 2
     speed = N * 0.84 / (1.5 * _beat(m)) / a  # masses a second: end to end and back in three beats

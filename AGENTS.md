@@ -30,7 +30,9 @@ The README is for people. This file is the technical map.
 `td/ep_visual_td.py` runs inside TouchDesigner (Textport: `exec(open(ep_td := r'<path>\ep_visual_td.py').read())`, `ep_td`
 telling it where `gen/` is) and
 builds `/project1/ep_visual`. The page's pixel grid comes in through a WebSocket DAT and a Script TOP, with
-`td.html` in a Web Render TOP as the fallback. It then runs through a chain of Cross TOPs: displace, gen, mirror,
+`td.html` in a Web Render TOP as the fallback; the grid stays at its own size and the graphics card makes it big (a
+Resolution TOP, whole cells). It then runs through a chain of Cross TOPs, each with a Switch TOP after it so that an effect
+that is off costs nothing: displace, gen, mirror,
 feedback, rgbsplit, edge, blur, tint, bloom, hue, strobe. The result lands in `out`, and from there goes to Spout,
 NDI, a window or a movie file.
 

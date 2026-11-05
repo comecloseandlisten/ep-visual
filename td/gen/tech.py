@@ -7,28 +7,8 @@ _TECH_LINES = (((.04, .30), (.30, .30), (.50, .50), (.80, .50), (.96, .66)),
                ((.96, .90), (.40, .90), (.10, .60), (.10, .10), (.62, .10)))
 
 
-def _tech_beats(m):
-    # beats so far as read ahead; without a tempo they go by the mids' clock, so that nothing stops
-    return m['beat/count'] + m['beat/phase'] % 1.0 if _locked(m) else 2 * m['clock/mid']
-
-
-def _tech_set(buf, xs, ys, w):
-    # like _plot, but a cell reached twice is no brighter: lines stay even
-    keep = (xs >= 0) & (xs < N) & (ys >= 0) & (ys < N)
-    yi, xi = ys[keep].astype(int), xs[keep].astype(int)
-    buf[yi, xi] = np.maximum(buf[yi, xi], np.broadcast_to(w, xs.shape)[keep])
-
-
-def _tech_line(buf, x0, y0, x1, y1, w):
-    # lines from (x0, y0) to (x1, y1), one or arrays of them
-    x0, y0, x1, y1 = (np.atleast_1d(np.asarray(a, np.float32)) for a in (x0, y0, x1, y1))
-    n = int(max(np.abs(x1 - x0).max(), np.abs(y1 - y0).max())) + 2
-    t = np.linspace(0, 1, n, dtype=np.float32)[:, None]
-    _tech_set(buf, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, np.asarray(w, np.float32))
-
-
 def _tech_box(buf, x0, y0, x1, y1, w):
-    _tech_line(buf, (x0, x1, x1, x0), (y0, y0, y1, y1), (x1, x1, x0, x0), (y0, y1, y1, y0), w)
+    _line(buf, (x0, x1, x1, x0), (y0, y0, y1, y1), (x1, x1, x0, x0), (y0, y1, y1, y0), w)
 
 
 def _tech_dots(buf, x, y, rad, w):
@@ -39,12 +19,7 @@ def _tech_dots(buf, x, y, rad, w):
     d = np.arange(-int(rad.max()) - 1, int(rad.max()) + 2, dtype=np.float32)
     dx, dy = (a.ravel() for a in np.meshgrid(d, d))
     fall = np.clip(rad[:, None] + 0.5 - np.hypot(dx, dy)[None, :], 0, 1) * w[:, None]
-    _tech_set(buf, np.floor(x)[:, None] + dx + 0.5, np.floor(y)[:, None] + dy + 0.5, fall)
-
-
-def _tech_chroma():
-    c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
-    return c / max(float(c.max()), 1e-3)
+    _ink(buf, np.floor(x)[:, None] + dx + 0.5, np.floor(y)[:, None] + dy + 0.5, fall)
 
 
 @gen('tech_radar', 'mysterious', 'tense', 'focused')
@@ -56,7 +31,7 @@ def _tech_radar(img, m, dt, size, hot, other):
         own.update(r=np.hypot(x, y), ang=np.arctan2(y, x), bear=rng.uniform(0, _TECH_TAU, (10, 3)).astype(np.float32),
                    glow=np.zeros((10, 3), np.float32), arm=None, off=rng.uniform(-0.3, 0.3, (10, 3)).astype(np.float32))
     R = 0.46 * N * size
-    arm = (math.pi / 2 - _TECH_TAU * _tech_beats(m) / 4) % _TECH_TAU
+    arm = (math.pi / 2 - _TECH_TAU * _beats(m, 2, 'clock/mid') / 4) % _TECH_TAU
     step = 0.0 if own['arm'] is None else (own['arm'] - arm) % _TECH_TAU
     own['arm'] = arm
     r = own['r']
@@ -137,7 +112,7 @@ def _tech_circuit(img, m, dt, size, hot, other):
     buf = np.zeros((N, N), np.float32)
     w = 0.16 + 0.84 * heat
     for d in range(max(1, int(round(size)))):
-        _tech_set(buf, x + d, y + d, w)
+        _ink(buf, x + d, y + d, w)
     tip = ends[1:] - 1
     _tech_dots(buf, x[tip], y[tip], 1.4 * size, 0.3 + 0.7 * heat[tip])
     h = own['chip'] * size
@@ -179,13 +154,13 @@ def _tech_graph(img, m, dt, size, hot, other):
     x = N / 2 + own['at'][:, 0] * 0.44 * N * size + drift[:, 0]
     y = N / 2 + own['at'][:, 1] * 0.44 * N * size + drift[:, 1]
     buf = np.zeros((N, N), np.float32)
-    _tech_line(buf, x[own['ea']], y[own['ea']], x[own['eb']], y[own['eb']], 0.28)
+    _line(buf, x[own['ea']], y[own['ea']], x[own['eb']], y[own['eb']], 0.28)
     b = _bands()[np.arange(16) % 10]
     _tech_dots(buf, x, y, (1.2 + 4 * b) * size ** 0.5, 0.45 + 0.55 * np.maximum(flash, b))
     if own['go']:
         a, c = (np.array([p[i] for p in own['go']]) for i in (0, 1))
         t = own['t']
-        _tech_line(buf, x[a] + (x[c] - x[a]) * max(0.0, t - 0.25), y[a] + (y[c] - y[a]) * max(0.0, t - 0.25),
+        _line(buf, x[a] + (x[c] - x[a]) * max(0.0, t - 0.25), y[a] + (y[c] - y[a]) * max(0.0, t - 0.25),
                    x[a] + (x[c] - x[a]) * t, y[a] + (y[c] - y[a]) * t, 1.0)
         _tech_dots(buf, x[a] + (x[c] - x[a]) * t, y[a] + (y[c] - y[a]) * t, 1.2, 1.0)
     _shade(img, buf, hot, other)
@@ -206,7 +181,7 @@ def _tech_metro(img, m, dt, size, hot, other):
     own = S['own']
     if 'lines' not in own:
         own['lines'] = [_tech_route(p, 17) for p in _TECH_LINES]
-    beats = _tech_beats(m)
+    beats = _beats(m, 2, 'clock/mid')
     paint = (hot, other, 0.6 * hot + 0.4 * other, 0.35 * hot + 0.65 * other)
     white = np.clip(hot + other, 0, 1)
     ring, hole, cars = (np.zeros((N, N), np.float32) for _ in range(3))
@@ -214,7 +189,7 @@ def _tech_metro(img, m, dt, size, hot, other):
         x, y = N / 2 + (px - N / 2) * size, N / 2 + (py - N / 2) * size
         buf = np.zeros((N, N), np.float32)
         for dx, dy in ((0, 0), (1, 0), (0, 1)):
-            _tech_set(buf, x + dx, y + dy, np.float32(0.62))
+            _ink(buf, x + dx, y + dy, np.float32(0.62))
         img += buf[..., None] * paint[k]
         at = np.round(np.arange(n + 1) * gap).astype(int)
         _tech_dots(ring, x[at], y[at], 2.2, 1.0)
@@ -228,7 +203,7 @@ def _tech_metro(img, m, dt, size, hot, other):
         length = int((6 + 16 * m['level']) * size)
         i = np.arange(max(0, a - length), min(len(x), a + length + 1))
         for dx, dy in ((0, 0), (1, 0), (0, 1), (-1, 0), (0, -1)):
-            _tech_set(cars, x[i] + dx, y[i] + dy, np.float32(1.0))
+            _ink(cars, x[i] + dx, y[i] + dy, np.float32(1.0))
     img *= 1 - np.clip(ring, 0, 1)[..., None]
     img += (ring - hole).clip(0, 1)[..., None] * white * 0.85
     img += cars[..., None] * (0.3 * white + 0.7 * hot)
@@ -265,7 +240,7 @@ def _tech_ecg(img, m, dt, size, hot, other):
     own = S['own']
     if 'y' not in own:
         own.update(y=np.full(N, N * 0.42, np.float32), head=None)
-    beats = _tech_beats(m)
+    beats = _beats(m, 2, 'clock/mid')
     head = beats / 4 % 1 * N
     a = own['head'] if own['head'] is not None else head
     own['head'] = head
@@ -291,7 +266,7 @@ def _tech_seismo(img, m, dt, size, hot, other):
     R = 9
     if 'v' not in own:
         own.update(v=rng.normal(0, 0.03, (R, N)).astype(np.float32), at=None)
-    pos = int(_tech_beats(m) / 4 * N)
+    pos = int(_beats(m, 2, 'clock/mid') / 4 * N)
     a = pos - 1 if own['at'] is None else own['at']
     own['at'] = pos
     i = np.arange(max(a + 1, pos - N + 1), pos + 1)
@@ -322,7 +297,7 @@ def _tech_barcode(img, m, dt, size, hot, other):
     wide = 2 + int(6 * (1 - min(1.0, fine)))
     strips = ((1.2, 0.68, 0.24), (-0.8, 0.5, 0.07), (0.6, 0.31, 0.26), (-1.5, 0.13, 0.07))
     top = _bands()[6:10]
-    sx = abs(_tech_beats(m) / 4 % 1 * 2 - 1) * N
+    sx = abs(_beats(m, 2, 'clock/mid') / 4 % 1 * 2 - 1) * N
     glow = 0.32 + 0.68 * np.exp(-((_X[0] - sx) / 13) ** 2)
     buf = np.zeros((N, N), np.float32)
     span = (0, 0)
@@ -353,7 +328,7 @@ def _tech_barcode(img, m, dt, size, hot, other):
 @gen('tech_progress', 'focused', 'happy', 'euphoric', 'drop')
 def _tech_progress(img, m, dt, size, hot, other):
     # loading bars block by block, the first a beat long, the next two, then four and on: the song's own counter. A drop fills them
-    beats = _tech_beats(m)
+    beats = _beats(m, 2, 'clock/mid')
     rows, blocks = 6, 16
     w = 0.84 * N * size / blocks
     x0, h = N / 2 - 8 * w, 0.058 * N * size
@@ -423,7 +398,7 @@ def _tech_memmap(img, m, dt, size, hot, other):
                 own['next'] += 1
     used = c > 0
     light = used * (0.34 + 0.66 * fresh)
-    head = int(_tech_beats(m) * 4) % (G * G)
+    head = int(_beats(m, 2, 'clock/mid') * 4) % (G * G)
     p = min(10, max(3, int(round(5 * size))))
     n = min(N, G * p)
     o = (N - n) // 2
@@ -451,7 +426,7 @@ def _tech_city(img, m, dt, size, hot, other):
     g = max(14, int(21 * size))
     n = -(-N // g)
     span = g * n
-    green = int(_tech_beats(m) / 2) % 2  # 0: along the rows, 1: along the columns
+    green = int(_beats(m, 2, 'clock/mid') / 2) % 2  # 0: along the rows, 1: along the columns
     pos, way, axis = own['pos'] % span, own['way'], own['axis']
     go = way * dt * N * (0.3 + 0.9 * _v('drive/mid', 0.5))
     ahead = (way * (g / 2 - pos)) % g
@@ -460,7 +435,7 @@ def _tech_city(img, m, dt, size, hot, other):
     lane = g * (own['street'] % n + 0.5) + 1.6 * way
     x, y = np.where(axis == 0, pos, lane) % span, np.where(axis == 0, lane, pos) % span
     k = int(K * (0.25 + 0.75 * m['level']))
-    _tech_set(S['trail'], x[:k], y[:k], np.float32(1.0))
+    _ink(S['trail'], x[:k], y[:k], np.float32(1.0))
     u, v = np.abs(_X % g - g / 2), np.abs(_Y % g - g / 2)
     road = (u < 3.5) | (v < 3.5)
     kerb = (np.abs(u - 3.5) < 0.6) & (v > 3.5) | (np.abs(v - 3.5) < 0.6) & (u > 3.5)
@@ -501,13 +476,13 @@ def _tech_orbits(img, m, dt, size, hot, other):
 
         ox, oy, oz = place(t)
         seen = (oz > 0) | (np.hypot(ox, oy) > 1)
-        _tech_set(buf, (N / 2 + R * ox)[seen], (N / 2 + R * oy)[seen], np.float32(0.22))
+        _ink(buf, (N / 2 + R * ox)[seen], (N / 2 + R * oy)[seen], np.float32(0.22))
         head = rate * m['clock/treb'] + np.array([0.0, math.pi], np.float32)
         for a in head:
             arc = a - np.sign(rate) * np.linspace(0, 0.5, 40, dtype=np.float32)
             ax, ay, az = place(arc)
             seen = (az > 0) | (np.hypot(ax, ay) > 1)
-            _tech_set(buf, (N / 2 + R * ax)[seen], (N / 2 + R * ay)[seen], np.linspace(0.9, 0.25, 40, dtype=np.float32)[seen])
+            _ink(buf, (N / 2 + R * ax)[seen], (N / 2 + R * ay)[seen], np.linspace(0.9, 0.25, 40, dtype=np.float32)[seen])
         hx, hy, hz = place(head)
         seen = (hz > 0) | (np.hypot(hx, hy) > 1)
         sx.append((N / 2 + R * hx)[seen])
@@ -534,13 +509,13 @@ def _tech_dials(img, m, dt, size, hot, other):
         a = 2.72 - 2.3 * s
         red = s > 0.78
         lit = 0.55 + 0.45 * (n > 0.78)
-        _tech_set(buf, cx + R * np.cos(a), cy + R * np.sin(a), np.where(red, lit, 0.34).astype(np.float32))
-        _tech_set(buf, cx + (R + 1) * np.cos(a[red]), cy + (R + 1) * np.sin(a[red]), np.float32(lit))
+        _ink(buf, cx + R * np.cos(a), cy + R * np.sin(a), np.where(red, lit, 0.34).astype(np.float32))
+        _ink(buf, cx + (R + 1) * np.cos(a[red]), cy + (R + 1) * np.sin(a[red]), np.float32(lit))
         a = 2.72 - 2.3 * tick
-        _tech_line(buf, cx + 0.88 * R * np.cos(a), cy + 0.88 * R * np.sin(a), cx + R * np.cos(a), cy + R * np.sin(a), 0.4)
+        _line(buf, cx + 0.88 * R * np.cos(a), cy + 0.88 * R * np.sin(a), cx + R * np.cos(a), cy + R * np.sin(a), 0.4)
         a = 2.72 - 2.3 * float(n)
         for d in (0, 1):
-            _tech_line(buf, cx + d, cy, cx + d + 0.96 * R * math.cos(a), cy + 0.96 * R * math.sin(a), 1.0)
+            _line(buf, cx + d, cy, cx + d + 0.96 * R * math.cos(a), cy + 0.96 * R * math.sin(a), 1.0)
         _tech_dots(buf, cx, cy, 0.09 * R + 1, 0.7)
         _tech_box(buf, cx - 1.14 * R, cy - 0.24 * R, cx + 1.14 * R, cy + 1.14 * R, 0.16)
     _shade(img, buf, hot, other)
@@ -558,8 +533,8 @@ def _tech_scope(img, m, dt, size, hot, other):
     grid = ((gx % div < 1) | (gy % div < 1) | (gx >= W) | (gy >= H)) & inside
     fine = ((gx < 2) & (gy % (div / 5) < 1) | (gy < 2) & (gx % (div / 5) < 1)) & inside
     img += (grid * np.float32(0.14) + fine * np.float32(0.3))[..., None] * other
-    c = _tech_chroma() ** 2
-    head = _tech_beats(m) % 1.0
+    c = _chroma() ** 2
+    head = _beats(m, 2, 'clock/mid') % 1.0
     last = own.get('x', head)
     own['x'] = head
     last = 0.0 if head < last else last
@@ -571,7 +546,7 @@ def _tech_scope(img, m, dt, size, hot, other):
     y = N / 2 + wave * H * (0.45 + 0.5 * m['level'])
     x = N / 2 - W + 2 * W * u
     for d in (0, 1):
-        _tech_set(S['trail'], x, y + d, np.float32(1.0))
+        _ink(S['trail'], x, y + d, np.float32(1.0))
     buf = S['trail'].copy()
     _tech_dots(buf, x[-1], y[-1], 1.6, 1.0)
     _shade(img, buf, hot, other)
@@ -585,7 +560,7 @@ def _tech_punch(img, m, dt, size, hot, other):
     if 'cols' not in own:
         own.update(cols=np.zeros((12, C), np.float32), fed=0)
     if _tick('feed', m, 4):
-        c = _tech_chroma()
+        c = _chroma()
         cols = own['cols'] = np.roll(own['cols'], 1, 1)
         cols[:, 0] = np.where(c > 0.55, 0.5 + 0.5 * c, 0)
         own['fed'] += 1
@@ -624,7 +599,7 @@ def _tech_scan(img, m, dt, size, hot, other):
     ang = np.arctan2(v + 0.12, u)
     ph = np.hypot(u, 1.25 * (v + 0.12)) * 26 * own['f'] + 1.5 * np.sin(ang + 0.7) + 2.2 * v * v + 1.4 * np.sin(2.4 * u + 1.1 * v)
     ridge = np.clip(0.55 + 1.3 * np.sin(ph), 0, 1)
-    ly = N / 2 + (abs(_tech_beats(m) / 4 % 1 * 2 - 1) * 2 - 1) * b * 1.08
+    ly = N / 2 + (abs(_beats(m, 2, 'clock/mid') / 4 % 1 * 2 - 1) * 2 - 1) * b * 1.08
     last = own.get('ly', ly)
     own['ly'] = ly
     lo, hi = int(max(0, min(ly, last) - 1)), int(min(N, max(ly, last) + 2))
@@ -634,8 +609,8 @@ def _tech_scan(img, m, dt, size, hot, other):
     for sx in (-1, 1):
         for sy in (-1, 1):  # the corners of the frame
             x, y = N / 2 + sx * bx, N / 2 + sy * by
-            _tech_line(buf, x, y, x - sx * tip, y, 0.6)
-            _tech_line(buf, x, y, x, y - sy * tip, 0.6)
+            _line(buf, x, y, x - sx * tip, y, 0.6)
+            _line(buf, x, y, x, y - sy * tip, 0.6)
     _shade(img, buf, hot, other)
     r = int(ly)
     if 0 <= r < N:
@@ -660,8 +635,8 @@ def _tech_matrix(img, m, dt, size, hot, other):
     gy = N / 2 + step * (4.0 - np.arange(10, dtype=np.float32))
     left, low = gx[0] - 1.4 * step, gy[-1] - 1.4 * step
     buf = np.zeros((N, N), np.float32)
-    _tech_line(buf, np.full(10, gx[0]), gy, np.full(10, gx[-1]), gy, 0.13)
-    _tech_line(buf, gx, np.full(10, gy[0]), gx, np.full(10, gy[-1]), 0.13)
+    _line(buf, np.full(10, gx[0]), gy, np.full(10, gx[-1]), gy, 0.13)
+    _line(buf, gx, np.full(10, gy[0]), gx, np.full(10, gy[-1]), 0.13)
     px, py = (a.ravel() for a in np.meshgrid(gx, gy))
     _tech_dots(buf, px, py, 0.6, 0.3)
     clocks = np.array((m['clock/bass'],) * 3 + (m['clock/mid'],) * 4 + (m['clock/treb'],) * 3, np.float32)
@@ -669,11 +644,11 @@ def _tech_matrix(img, m, dt, size, hot, other):
     ox = gx[out]
     dash = lambda d: (0.5 + 0.5 * (np.sin(d * 0.75 - 7 * clocks) > 0)) * (0.3 + 0.7 * b ** 0.7)
     d = (ox - left) * t
-    _tech_set(buf, left + d, gy + 0 * d, dash(d))
-    _tech_set(buf, left + d, gy + 1 + 0 * d, dash(d))
+    _ink(buf, left + d, gy + 0 * d, dash(d))
+    _ink(buf, left + d, gy + 1 + 0 * d, dash(d))
     d = (gy - low) * t
-    _tech_set(buf, ox + 0 * d, low + d, dash(d + ox - left))
-    _tech_set(buf, ox + 1 + 0 * d, low + d, dash(d + ox - left))
+    _ink(buf, ox + 0 * d, low + d, dash(d + ox - left))
+    _ink(buf, ox + 1 + 0 * d, low + d, dash(d + ox - left))
     _tech_dots(buf, ox, gy, 1.2 + 2.2 * b, 0.6 + 0.4 * b)
     _tech_dots(buf, np.full(10, left), gy, 2.2, 0.35 + 0.65 * b)
     _tech_dots(buf, gx, np.full(10, low), 2.2, 0.3)

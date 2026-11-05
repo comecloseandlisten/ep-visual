@@ -940,14 +940,16 @@ function draw(dt, f, lit = null) {
   touch.sendFrame(N, img.data, vis);
   const fromTd = touch.showing, lighting = light.on && !st.idle;
   if (lighting && !fromTd) light.apply(img.data, N, N / 125, st.ink);
-  smallCtx.putImageData(img, 0, 0);
-  bigCtx.imageSmoothingEnabled = false;
-  bigCtx.drawImage(small, 0, 0, SIZE, SIZE);
-  if (st.gap && N <= 125) {
-    // soft-light keeps white paper white and black black, and only lifts the edges of colours: an LED panel
-    bigCtx.globalCompositeOperation = 'soft-light';
-    bigCtx.drawImage(gapLayer, 0, 0);
-    bigCtx.globalCompositeOperation = 'source-over';
+  if (!fromTd) { // (its picture covers the canvas: nothing of this would be seen)
+    smallCtx.putImageData(img, 0, 0);
+    bigCtx.imageSmoothingEnabled = false;
+    bigCtx.drawImage(small, 0, 0, SIZE, SIZE);
+    if (st.gap && N <= 125) {
+      // soft-light keeps white paper white and black black, and only lifts the edges of colours: an LED panel
+      bigCtx.globalCompositeOperation = 'soft-light';
+      bigCtx.drawImage(gapLayer, 0, 0);
+      bigCtx.globalCompositeOperation = 'source-over';
+    }
   }
   if (fromTd && lighting) light.over(bigCtx, touch.bmp, SIZE, st.ink);
   else touch.drawView(bigCtx, SIZE); // what it made of it, while TD FX is on

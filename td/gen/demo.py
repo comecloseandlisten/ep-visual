@@ -1,11 +1,6 @@
 # Old demoscene techniques, each answering a different part of the music.
 
 
-def _demo_beats(m):
-    # where we are in beats; with no tempo it runs on the bass clock
-    return m['beat/count'] + m['beat/phase'] % 1.0 if _locked(m) else 2.0 * m['clock/bass']
-
-
 @gen('demo_copper', 'happy', 'euphoric', whole=False)
 def _demo_copper(img, m, dt, size, hot, other):
     # copper bars: five shaded bars bobbing on sines, each as thick as its pair of bands, the lows in front
@@ -26,7 +21,7 @@ def _demo_copper(img, m, dt, size, hot, other):
 def _demo_plasma(img, m, dt, size, hot, other):
     # plasma: twelve sine waves, one a note, each as strong as it sounds and running its own way, so a chord has a shape
     own = S['own']
-    c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
+    c = _chroma()
     c = c / max(float(c.max()), 1e-3)
     own['w'] = w = own.get('w', c) + (c - own.get('w', c)) * (1 - math.exp(-dt / 0.25))
     k = np.arange(12, dtype=np.float32)
@@ -69,7 +64,7 @@ def _demo_stars(img, m, dt, size, hot, other):
 @gen('demo_roto', 'aggressive', 'tense', 'drop', whole=True)
 def _demo_roto(img, m, dt, size, hot, other):
     # a rotozoomer on a checker: a turn every four bars, and it jumps at you on the beat as hard as the kicks are
-    beats = _demo_beats(m)
+    beats = _beats(m, 2.0)
     kick = _recent('kicks', max(m['hit/kick'], 0.8 * m['hit/bass']), m, dt)
     a = 2 * math.pi * beats / 16 + 0.4 * math.sin(2 * math.pi * beats / 32)
     cell = N * 0.075 * size * (1 + 0.3 * math.sin(0.5 * m['clock/bass']) + 0.7 * kick * math.exp(-4 * (m['beat/phase'] % 1.0)))
@@ -157,12 +152,12 @@ def _demo_scroller(img, m, dt, size, hot, other):
     if 'cols' not in own:
         own.update(cols=np.zeros((90, 12), np.float32), f=0.0)
     if _tick('scroll', m, 4):
-        c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
+        c = _chroma()
         own['cols'] = np.roll(own['cols'], 1, 0)
         own['cols'][0] = (c > 0.6 * max(float(c.max()), 1e-3)) * min(1.0, 0.5 + m['level'])
         own['f'] = 0.0
     own['f'] = min(1.0, own['f'] + dt * 8)
-    f = (_demo_beats(m) * 4) % 1.0 if _locked(m) else own['f']
+    f = (_beats(m, 2.0) * 4) % 1.0 if _locked(m) else own['f']
     pitch = max(2.6, 3.2 * size)
     x = N - (np.arange(90, dtype=np.float32) + f) * pitch
     wave = N * 0.2 * np.sin(x * 0.05 + 1.2 * m['clock/mid']) + N * 0.07 * np.sin(x * 0.13 - 1.9 * m['clock/bass'])
@@ -297,7 +292,7 @@ def _demo_wormhole(img, m, dt, size, hot, other):
     arms = 6 if _v('key/major') > 0.5 else 4
     wind = 0.7 + 0.8 * _v('mood/arousal', 0.5)
     spiral = np.sin(arms * np.arctan2(y, x) + wind * depth + 0.6 * t)
-    pos = depth + _demo_beats(m)
+    pos = depth + _beats(m, 2.0)
     rings = 0.5 + 0.5 * np.cos(2 * math.pi * pos)
     light = np.clip(2.2 * spiral, 0, 1) * (0.3 + 0.7 * rings) * np.clip((r - 3) / 12, 0, 1)
     pick = (np.floor(pos + 0.5) % 2)[..., None]
@@ -410,7 +405,7 @@ def _demo_metaballs(img, m, dt, size, hot, other):
 def _demo_lens(img, m, dt, size, hot, other):
     # a bouncing lens: a glass ball over a lattice of dots, landing on every beat and squashing there, as high as it is loud,
     # crossing the frame and back in four bars
-    beats = _demo_beats(m)
+    beats = _beats(m, 2.0)
     p = beats % 1.0
     air = 4 * p * (1 - p)
     r = N * 0.2 * size

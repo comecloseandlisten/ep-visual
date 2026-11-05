@@ -1,26 +1,8 @@
-# Geometry and 3D wireframes. Flat figures draw with _geo_seg, solids go through _geo_turn and _geo_view.
-
-def _geo_put(buf, x, y, w):
-    # cells take the brightest light that falls on them, so a line stays even and crossings don't burn out
-    keep = (x >= 0) & (x < N) & (y >= 0) & (y < N)
-    w = np.broadcast_to(w, x.shape)[keep]
-    order = np.argsort(w)
-    xi, yi, w = x[keep][order].astype(int), y[keep][order].astype(int), w[order]
-    buf[yi, xi] = np.maximum(buf[yi, xi], w)
-
-
-def _geo_seg(buf, ax, ay, bx, by, w=1.0):
-    # straight lines from a to b, all at once
-    if ax.size == 0:
-        return
-    n = min(160, int(max(np.abs(bx - ax).max(), np.abs(by - ay).max())) + 2)
-    t = np.linspace(0, 1, n, dtype=np.float32)[:, None]
-    _geo_put(buf, ax + (bx - ax) * t, ay + (by - ay) * t, np.broadcast_to(np.float32(w), ax.shape)[None, :])
-
+# Geometry and 3D wireframes. Flat figures draw with _line, solids go through _geo_turn and _geo_view.
 
 def _geo_path(buf, x, y, w=1.0):
     # a line through points in turn
-    _geo_seg(buf, x[:-1], y[:-1], x[1:], y[1:], w)
+    _line(buf, x[:-1], y[:-1], x[1:], y[1:], w)
 
 
 def _geo_dots(buf, x, y, w, r=1):
@@ -28,7 +10,7 @@ def _geo_dots(buf, x, y, w, r=1):
     o = np.arange(-r, r + 1, dtype=np.float32)
     dx, dy = (a.ravel() for a in np.meshgrid(o, o))
     near = dx * dx + dy * dy <= r * r + 0.5
-    _geo_put(buf, x[:, None] + dx[near], y[:, None] + dy[near], np.broadcast_to(np.float32(w), x.shape)[:, None])
+    _ink(buf, x[:, None] + dx[near], y[:, None] + dy[near], np.broadcast_to(np.float32(w), x.shape)[:, None])
 
 
 def _geo_turn(p, a, b, c=0.0):
@@ -49,7 +31,7 @@ def _geo_view(p, scale, cam=4.0):
 
 def _geo_wire(buf, x, y, light, edges, w=1.0):
     a, b = edges[:, 0], edges[:, 1]
-    _geo_seg(buf, x[a], y[a], x[b], y[b], w * 0.5 * (light[a] + light[b]))
+    _line(buf, x[a], y[a], x[b], y[b], w * 0.5 * (light[a] + light[b]))
 
 
 def _geo_axis(k, a):
@@ -59,11 +41,6 @@ def _geo_axis(k, a):
     r = np.eye(3, dtype=np.float32)
     r[i, i], r[i, j], r[j, i], r[j, j] = c, -s, s, c
     return r
-
-
-def _geo_x(m, rate=0.7, clock='clock/bass'):
-    # the beat as one running number, a clock in its place without a tempo
-    return m['beat/count'] + m['beat/phase'] % 1.0 if _locked(m) else rate * m[clock]
 
 
 def _geo_corners(dims):
@@ -139,7 +116,7 @@ def _geo_rose(img, m, dt, size, hot, other):
 @gen('geo_whirl', 'focused', 'tense', 'mysterious')
 def _geo_whirl(img, m, dt, size, hot, other):
     # polygons each set in the last: the twist snaps tight on the beat and unwinds until the next one
-    x = _geo_x(m, 0.4, 'clock/mid')
+    x = _beats(m, 0.4, 'clock/mid')
     n = 3 + (int(x) // 8) % 4
     ph = x % 1
     twist = 0.05 + 0.3 * ((1 - ph) ** 2 if _locked(m) else 0.5 + 0.5 * math.sin(2 * math.pi * ph))
@@ -147,7 +124,7 @@ def _geo_whirl(img, m, dt, size, hot, other):
     px, py = N * 0.47 * size * np.cos(a), N * 0.47 * size * np.sin(a)
     buf = np.zeros((N, N), np.float32)
     for i in range(18):
-        _geo_seg(buf, N / 2 + px, N / 2 + py, N / 2 + np.roll(px, -1), N / 2 + np.roll(py, -1), 1.0 - 0.72 * (i % 3) / 2)
+        _line(buf, N / 2 + px, N / 2 + py, N / 2 + np.roll(px, -1), N / 2 + np.roll(py, -1), 1.0 - 0.72 * (i % 3) / 2)
         px, py = px + twist * (np.roll(px, -1) - px), py + twist * (np.roll(py, -1) - py)
     _shade(img, buf, hot, other)
 
@@ -157,7 +134,7 @@ def _geo_chords(img, m, dt, size, hot, other):
     # the twelve notes round the circle of fifths, a line between any two sounding together: each chord draws its own
     # polygon, the last one lingers, and the key turns to the top
     own = S['own']
-    c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
+    c = _chroma()
     c = np.clip((c / max(float(c.max()), 1e-3) - 0.25) / 0.75, 0, 1)
     root = max(0, int(_v('key/root', -1)))
     want = -2 * math.pi * (7 * root % 12) / 12
@@ -167,11 +144,11 @@ def _geo_chords(img, m, dt, size, hot, other):
     rad = N * 0.43 * size
     x, y = (N / 2 + rad * np.cos(ang)).astype(np.float32), (N / 2 + rad * np.sin(ang)).astype(np.float32)
     buf = np.zeros((N, N), np.float32)
-    _geo_seg(buf, x, y, np.roll(x, 1), np.roll(y, 1), 0.2)  # the star through all twelve
+    _line(buf, x, y, np.roll(x, 1), np.roll(y, 1), 0.2)  # the star through all twelve
     i, j = np.triu_indices(12, 1)
     w = own['w'] = np.maximum(own.get('w', 0.0) * math.exp(-dt / 1.1), c[i] * c[j])
     on = w > 0.05
-    _geo_seg(buf, x[i[on]], y[i[on]], x[j[on]], y[j[on]], 0.25 + 0.75 * w[on])
+    _line(buf, x[i[on]], y[i[on]], x[j[on]], y[j[on]], 0.25 + 0.75 * w[on])
     _geo_dots(buf, x, y, 0.3 + 0.7 * c, 2)
     _shade(img, buf, hot, other)
 
@@ -180,7 +157,7 @@ def _geo_chords(img, m, dt, size, hot, other):
 def _geo_tumble(img, m, dt, size, hot, other):
     # a cube rolling a quarter turn on every beat, quick off the mark and still before the next, a small one rolling inside
     own = S['own']
-    x = _geo_x(m, 0.9)
+    x = _beats(m, 0.9)
     step = int(x)
     if 'r' not in own:
         own.update(r=np.eye(3, dtype=np.float32), step=step)
@@ -221,7 +198,7 @@ def _geo_shatter(img, m, dt, size, hot, other):
     # an icosahedron whose faces fly off on the backbeat, as far as the snares are strong, and settle again
     strength = _recent('snares', m['hit/snare'], m, dt)
     if _locked(m):
-        burst = max(0.4, min(1.0, 1.3 * strength)) * math.exp(-3 * ((_geo_x(m) - 1) % 2))
+        burst = max(0.4, min(1.0, 1.3 * strength)) * math.exp(-3 * ((_beats(m) - 1) % 2))
     else:
         burst = 0.25 + 0.25 * math.sin(0.9 * m['clock/mid'])
     tri = _GEO_ICO[_GEO_ICO_F]
@@ -305,7 +282,7 @@ def _geo_plexus(img, m, dt, size, hot, other):
     x, y, l = _geo_view(_geo_turn(q, 0.4, 0.2 * t), N * 0.38 * size)
     buf = np.zeros((N, N), np.float32)
     i, j = i[on], j[on]
-    _geo_seg(buf, x[i], y[i], x[j], y[j], (1.2 - d[on] / reach) * 0.5 * (l[i] + l[j]))
+    _line(buf, x[i], y[i], x[j], y[j], (1.2 - d[on] / reach) * 0.5 * (l[i] + l[j]))
     _geo_dots(buf, x, y, 0.5 + 0.5 * l, 1)
     _shade(img, buf, hot, other)
 
@@ -369,14 +346,14 @@ def _geo_hilbert(img, m, dt, size, hot, other):
         own['p'] = _geo_hilbert_path(5)
     p = own['p']
     x, y = N / 2 + (p[:, 0] - 15.5) * 3.8 * size, N / 2 + (p[:, 1] - 15.5) * 3.8 * size
-    b = _geo_x(m, 0.8, 'clock/mid')
+    b = _beats(m, 0.8, 'clock/mid')
     head = int(32 * (int(b) + 1 - (1 - b % 1) ** 3)) % 1024
     buf = np.zeros((N, N), np.float32)
     _geo_path(buf, x, y, 0.2)
     k = np.arange(int(100 + 420 * m['level']))
     i = (head - k) % 1024
     on = i < 1023
-    _geo_seg(buf, x[i[on]], y[i[on]], x[i[on] + 1], y[i[on] + 1], (1 - k[on] / len(k)) ** 1.5 + 0.12)
+    _line(buf, x[i[on]], y[i[on]], x[i[on] + 1], y[i[on] + 1], (1 - k[on] / len(k)) ** 1.5 + 0.12)
     _geo_dots(buf, x[head:head + 1], y[head:head + 1], 1.0, 2)
     _shade(img, buf, hot, other)
 
@@ -390,7 +367,7 @@ def _geo_super(img, m, dt, size, hot, other):
     sway = 0.5 + 0.5 * math.sin(0.45 * m['clock/mid'])
     h.append((0.8 + 7 * (1 - _v('mood/arousal')) * (0.25 + 0.75 * sway), 3 + 7 * _v('bright')))  # (2 would be a circle)
     del h[:-60]
-    lobes = 3 + (int(_geo_x(m, 0.4, 'clock/mid')) // 16) % 6
+    lobes = 3 + (int(_beats(m, 0.4, 'clock/mid')) // 16) % 6
     phi = np.linspace(0, 2 * math.pi, 420, dtype=np.float32)
     buf = np.zeros((N, N), np.float32)
     turn = 0.15 * m['clock/mid']
@@ -418,14 +395,14 @@ def _geo_mobius(img, m, dt, size, hot, other):
     x0, y0, l0 = _geo_view(_geo_turn(_geo_strip(u, -1.0), a, b), scale)
     x1, y1, l1 = _geo_view(_geo_turn(_geo_strip(u, 1.0), a, b), scale)
     buf = np.zeros((N, N), np.float32)
-    _geo_seg(buf, x0, y0, x1, y1, 0.42 * (l0 + l1) / 2)
+    _line(buf, x0, y0, x1, y1, 0.42 * (l0 + l1) / 2)
     e = np.linspace(0, 4 * math.pi, 200)  # its one edge, twice round
     x, y, l = _geo_view(_geo_turn(_geo_strip(e, 1.0), a, b), scale)
     _geo_path(buf, x, y, 0.8 * l[1:])
-    run = 2 * math.pi * _geo_x(m, 0.5, 'clock/mid') / 4 - np.arange(0, 1.5, 0.04)
+    run = 2 * math.pi * _beats(m, 0.5, 'clock/mid') / 4 - np.arange(0, 1.5, 0.04)
     x0, y0, _ = _geo_view(_geo_turn(_geo_strip(run, 0.04), a, b), scale)
     x1, y1, _ = _geo_view(_geo_turn(_geo_strip(run, 0.96), a, b), scale)
-    _geo_seg(buf, x0, y0, x1, y1, (1 - np.arange(len(run)) / len(run)) ** 1.5 + 0.1)
+    _line(buf, x0, y0, x1, y1, (1 - np.arange(len(run)) / len(run)) ** 1.5 + 0.1)
     _shade(img, buf, hot, other)
 
 
@@ -449,7 +426,7 @@ def _geo_sphere(img, m, dt, size, hot, other):
     p = np.stack([rho * np.cos(phi), rho * np.sin(phi), z * r], 1).astype(np.float32)
     x, y, l = _geo_view(_geo_turn(p, 0.5 + 0.2 * t, 0.3 * t), N * 0.3 * size)
     buf = np.zeros((N, N), np.float32)
-    _geo_put(buf, x, y, l)
+    _ink(buf, x, y, l)
     _shade(img, buf, hot, other)
 
 
@@ -474,11 +451,11 @@ def _geo_gyro(img, m, dt, size, hot, other):
             _geo_path(buf, x, y, 1.5 * l[1:])
         x0, y0, l0 = seen(rad * spoke)
         x1, y1, _ = seen(0.88 * rad * spoke)
-        _geo_seg(buf, x0, y0, x1, y1, l0)
+        _line(buf, x0, y0, x1, y1, l0)
         if i:  # the pins it hangs from
             x0, y0, l0 = seen(rad * pin if axis == 0 else rad * pin[:, ::-1])
             x1, y1, _ = seen(1.36 * rad * pin if axis == 0 else 1.36 * rad * pin[:, ::-1])
-            _geo_seg(buf, x0, y0, x1, y1, 1.5 * l0)
+            _line(buf, x0, y0, x1, y1, 1.5 * l0)
     x, y, l = seen(0.16 * _GEO_CUBE)
     _geo_wire(buf, x, y, l, _GEO_CUBE_E, 1.5)
     _shade(img, buf, hot, other)

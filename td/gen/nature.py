@@ -19,27 +19,9 @@
 #   nat_twister    the mids: how wide it is and how fast it turns
 
 
-def _nat_ink(buf, xs, ys, w):
-    # light set at cells, not added: a line is as bright however many of its points land on one cell
-    keep = (xs >= 0) & (xs < N) & (ys >= 0) & (ys < N)
-    w = np.broadcast_to(np.asarray(w, np.float32), xs.shape)
-    np.maximum.at(buf, (ys[keep].astype(int), xs[keep].astype(int)), w[keep])
-
-
-def _nat_seg(buf, ax, ay, bx, by, w, n=14):
-    # straight lines from a to b, arrays of them
-    t = np.linspace(0, 1, n, dtype=np.float32)[:, None]
-    _nat_ink(buf, ax + (bx - ax) * t, ay + (by - ay) * t, w)
-
-
 def _nat_show(img, buf, hot, other, cut=0.03):
     # _shade, with what has all but faded cut off: the far end of a trail is not light
     _shade(img, np.where(buf < cut, 0, buf), hot, other)
-
-
-def _nat_phase(m, rate=0.6):
-    # where we are in the beat, 0..1; by the mids' clock without a tempo
-    return m['beat/phase'] % 1.0 if _locked(m) else (rate * m['clock/mid']) % 1.0
 
 
 def _nat_noise(rng, sx=1.0, sy=1.0, rough=2.0):
@@ -87,16 +69,16 @@ def _nat_tree(img, m, dt, size, hot, other):
         ln = own['ln'][k] * (grow if new else 1.0)
         bx, by = x + ln * np.cos(a), y + ln * np.sin(a)
         w = 1.0 if new else 0.5 + 0.3 * m['beat/pulse']
-        _nat_seg(buf, x, y, bx, by, w)
+        _line(buf, x, y, bx, by, w)
         if k < 3:  # the trunk and the big boughs are thicker
-            _nat_seg(buf, x + 1, y, bx + 1, by, w)
+            _line(buf, x + 1, y, bx + 1, by, w)
         if k < 1:
-            _nat_seg(buf, x - 1, y, bx - 1, by, w)
+            _line(buf, x - 1, y, bx - 1, by, w)
         x, y = bx, by
     if n >= deep:  # blossom on the tips, as much as there is light in the music
         open_ = min(1.0, (n - deep + grow) / 2) * (0.5 + 0.5 * m['level'])
         for dx, dy in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
-            _nat_ink(buf, x + dx, y + dy, open_)
+            _ink(buf, x + dx, y + dy, open_)
     S['trail'] = np.maximum(S['trail'], buf)
     _nat_show(img, S['trail'], hot, other)
 
@@ -126,10 +108,10 @@ def _nat_snow(img, m, dt, size, hot, other):
     np.minimum(drift, 0.24 * N, out=drift)
     show = int(100 + 220 * min(1.0, m['high'] + 4 * m['busy']))
     q = p[:show]
-    _nat_ink(S['trail'], q[:, 0], q[:, 1], 0.25 + 0.75 * q[:, 2] ** 2)
+    _ink(S['trail'], q[:, 0], q[:, 1], 0.25 + 0.75 * q[:, 2] ** 2)
     big = q[q[:, 2] > 0.72]  # the nearest are bigger
     for dx, dy in ((1, 0), (0, 1), (1, 1)):
-        _nat_ink(S['trail'], big[:, 0] + dx, big[:, 1] + dy, 0.7 * big[:, 2])
+        _ink(S['trail'], big[:, 0] + dx, big[:, 1] + dy, 0.7 * big[:, 2])
     lying = np.clip(1 - np.abs(_Y - drift[None, :]) / 1.3, 0, 1) * (drift[None, :] > 1) * 0.7 \
         + (_Y < drift[None, :]) * np.float32(0.14)
     _nat_show(img, np.maximum(S['trail'], lying), hot, other)
@@ -162,7 +144,7 @@ def _nat_fireflies(img, m, dt, size, hot, other):
     x, y = x[:awake], y[:awake]
     for dx, dy, f in ((0, 0, 1), (1, 0, 0.6), (-1, 0, 0.6), (0, 1, 0.6), (0, -1, 0.6), (1, 1, 0.3), (-1, 1, 0.3), (1, -1, 0.3),
                       (-1, -1, 0.3), (2, 0, 0.2), (-2, 0, 0.2), (0, 2, 0.2), (0, -2, 0.2)):
-        _nat_ink(S['trail'], x + dx, y + dy, light * f)
+        _ink(S['trail'], x + dx, y + dy, light * f)
     _nat_show(img, S['trail'], hot, other)
 
 
@@ -182,10 +164,10 @@ def _nat_rings(img, m, dt, size, hot, other):
     near = 1.25 - r[:, 1] / N * 1.4  # nearer the bank they are bigger
     for f, w in ((1.0, 0.9), (0.66, 0.6), (0.36, 0.4)):
         rad = 26 * size * near * f * np.sqrt(r[:, 2])
-        _nat_ink(buf, r[:, 0] + rad * np.cos(a), r[:, 1] + 0.36 * rad * np.sin(a), w * r[:, 3] * (1 - r[:, 2]) ** 1.4)
+        _ink(buf, r[:, 0] + rad * np.cos(a), r[:, 1] + 0.36 * rad * np.sin(a), w * r[:, 3] * (1 - r[:, 2]) ** 1.4)
     s = np.arange(0, N, 1, dtype=np.float32)  # the far bank, broken by the treble
     far = 0.3 * np.clip(np.sin(0.5 * s + 2 * m['clock/treb']) + np.sin(0.13 * s - m['clock/treb']), 0, 1)
-    _nat_ink(buf, s, np.full(N, N * 0.7, np.float32), far)
+    _ink(buf, s, np.full(N, N * 0.7, np.float32), far)
     _nat_show(img, buf, hot, other)
 
 
@@ -252,9 +234,9 @@ def _nat_swell(img, m, dt, size, hot, other):
     glint = np.clip(np.sin(x * 1.7 + 5.1 * ident + 3 * m['clock/treb']) + 0.6, 0, 1)
     w = (0.25 + 0.6 * p ** 0.5) * crest * (0.45 + 1.1 * road * glint) * np.clip((k - z) / 2.5, 0, 1)
     buf = np.zeros((N, N), np.float32)
-    _nat_ink(buf, np.broadcast_to(x, y.shape), np.minimum(y, hz - 1), w)
+    _ink(buf, np.broadcast_to(x, y.shape), np.minimum(y, hz - 1), w)
     s = x[0]
-    _nat_ink(buf, s, np.full_like(s, hz), np.float32(0.3))
+    _ink(buf, s, np.full_like(s, hz), np.float32(0.3))
     moon = np.hypot(_X - cx, _Y - N * 0.82)
     r = N * 0.075 * size
     buf += np.clip(1 - np.abs(moon - r), 0, 1) * 0.8 + (moon < r) * np.float32(0.1 + 0.2 * m['level'])
@@ -322,13 +304,13 @@ def _nat_flock(img, m, dt, size, hot, other):
     v *= speed / (np.hypot(v[:, 0], v[:, 1])[:, None] + 1e-3)
     p += dt * v
     dirn = v / speed
-    flap = 0.5 + 0.5 * np.sin(2 * math.pi * (2 * _nat_phase(m) + own['o'] * 0.25))
+    flap = 0.5 + 0.5 * np.sin(2 * math.pi * (2 * (_beats(m, 0.6, 'clock/mid') % 1.0) + own['o'] * 0.25))
     x, y = p[:, 0], p[:, 1]
     span = (1.4 + 1.2 * flap) * size
     for side in (1, -1):
         wx = x - dirn[:, 0] * 1.8 * size + side * dirn[:, 1] * span
         wy = y - dirn[:, 1] * 1.8 * size - side * dirn[:, 0] * span + flap
-        _nat_seg(S['trail'], x, y, wx, wy, np.float32(0.9), 5)
+        _line(S['trail'], x, y, wx, wy, np.float32(0.9), 5)
     _nat_show(img, S['trail'], hot, other, 0.05)
 
 
@@ -375,7 +357,7 @@ def _nat_school(img, m, dt, size, hot, other):
     n = np.hypot(tx, ty) + 1e-3
     bolt = np.hypot(v[:, 0], v[:, 1])
     buf = np.zeros((N, N), np.float32)
-    _nat_seg(buf, p[:, 0], p[:, 1], p[:, 0] - 3.2 * size * tx / n, p[:, 1] - 3.2 * size * ty / n, np.clip(0.42 + bolt / 90, 0, 1.0), 5)
+    _line(buf, p[:, 0], p[:, 1], p[:, 0] - 3.2 * size * tx / n, p[:, 1] - 3.2 * size * ty / n, np.clip(0.42 + bolt / 90, 0, 1.0), 5)
     _nat_show(img, buf, hot, other)
 
 
@@ -417,7 +399,7 @@ def _nat_roots(img, m, dt, size, hot, other):
             del own['d']
             return
     far = float(d.max()) + 14
-    sap = np.exp(-((d - _nat_phase(m) * far) / 8) ** 2)
+    sap = np.exp(-((d - (_beats(m, 0.6, 'clock/mid') % 1.0) * far) / 8) ** 2)
     light = np.where(d > 0, 0.3 + (0.3 + 0.7 * low) * sap * 1.1, 0).astype(np.float32)
     S['trail'] = np.maximum(S['trail'], light)
     S['trail'][int(top)] = np.maximum(S['trail'][int(top)], 0.3 + 0.3 * m['level'])
@@ -436,7 +418,7 @@ def _nat_mycelium(img, m, dt, size, hot, other):
         own.update(p=rng.uniform(0.1, 0.9, (k, 2)).astype(np.float32) * N, a=rng.uniform(0, 6.28, k).astype(np.float32),
                    tr=np.zeros((N, N), np.float32), spots=spots.astype(np.float32).reshape(12, -1))
     p, a, tr = own['p'], own['a'], own['tr']
-    c = np.array([_v('chroma/%d' % i) for i in range(12)], np.float32)
+    c = _chroma()
     c = (c / max(float(c.max()), 1e-3)) ** 2
     food = (c @ own['spots']).reshape(N, N)
     field = tr + 3 * food
@@ -480,9 +462,9 @@ def _nat_meteors(img, m, dt, size, hot, other):
     tail = 0.13 * size * (1 + 0.5 * m['high'])
     x, y = p[:, 0] - p[:, 2] * tail * t, p[:, 1] - p[:, 3] * tail * t
     w = (1 - t) ** 1.6 * p[:, 5] * np.clip(p[:, 4] * 7, 0, 1)
-    _nat_ink(buf, x, y, w)
-    _nat_ink(buf, x + 1, y, w * (t < 0.3) * 0.8)  # the head is heavier
-    _nat_ink(buf, x, y + 1, w * (t < 0.15) * 0.8)
+    _ink(buf, x, y, w)
+    _ink(buf, x + 1, y, w * (t < 0.3) * 0.8)  # the head is heavier
+    _ink(buf, x, y + 1, w * (t < 0.15) * 0.8)
     dots = np.hypot(_X - rx, _Y - ry)
     buf += np.clip(1 - dots / (2.5 + 2 * m['beat/pulse']), 0, 1) * 0.8  # the point they come from
     _nat_show(img, buf, hot, other)
@@ -516,7 +498,7 @@ def _nat_sun(img, m, dt, size, hot, other):
             ang = f[0] + f[1] * lift ** 0.5 * (2 * s - 1)
             rr = rad + N * (0.12 + 0.34 * f[3]) * size * rise * lift * np.abs(np.sin(math.pi * s)) ** 0.8
             gap = np.abs(s - 0.5) >= max(0.0, go - 0.5)  # it breaks from the top
-            _nat_ink(buf, cx + rr * np.cos(ang), cy + rr * np.sin(ang), w * (1 - go) ** 0.7 * gap)
+            _ink(buf, cx + rr * np.cos(ang), cy + rr * np.sin(ang), w * (1 - go) ** 0.7 * gap)
     own['f'] = [f for f in flares if S['t'] - f[2] < 2.9 * _beat(m)][-6:]
     _nat_show(img, buf, hot, other, 0.05)
 
@@ -557,7 +539,7 @@ def _nat_leaves(img, m, dt, size, hot, other):
     fade = np.clip(np.where(rest > 0, rest, 1.0), 0, 1)[:, None]
     buf = np.zeros((N, N), np.float32)
     vein = np.abs(own['v']) < 0.13
-    _nat_ink(buf, px, py, np.where(vein[None, :], 1.0, 0.42 + 0.14 * own['u'][None, :]) * fade)
+    _ink(buf, px, py, np.where(vein[None, :], 1.0, 0.42 + 0.14 * own['u'][None, :]) * fade)
     _nat_show(img, buf, hot, other)
 
 
@@ -632,18 +614,18 @@ def _nat_stars(img, m, dt, size, hot, other):
     buf = np.zeros((N, N), np.float32)
     done = edges[:n]
     if len(done):
-        _nat_seg(buf, x[done[:, 0]], y[done[:, 0]], x[done[:, 1]], y[done[:, 1]], np.float32(0.62), 60)
+        _line(buf, x[done[:, 0]], y[done[:, 0]], x[done[:, 1]], y[done[:, 1]], np.float32(0.62), 60)
     if n < len(edges):
         a, b = edges[n]
-        _nat_seg(buf, x[a:a + 1], y[a:a + 1], x[a:a + 1] + (x[b] - x[a]) * grow, y[a:a + 1] + (y[b] - y[a]) * grow, np.float32(1.0), 60)
+        _line(buf, x[a:a + 1], y[a:a + 1], x[a:a + 1] + (x[b] - x[a]) * grow, y[a:a + 1] + (y[b] - y[a]) * grow, np.float32(1.0), 60)
     lit = np.zeros(len(x), np.float32)
     lit[edges[:n + 1, 0]] = 1
     lit[edges[:n, 1]] = 1
     light = 0.45 + 0.55 * lit
     for dx, dy, f in ((0, 0, 1), (1, 0, 0.75), (-1, 0, 0.75), (0, 1, 0.75), (0, -1, 0.75), (2, 0, 0.3), (-2, 0, 0.3), (0, 2, 0.3), (0, -2, 0.3)):
-        _nat_ink(buf, x + dx, y + dy, light * f)
+        _ink(buf, x + dx, y + dy, light * f)
     dx, dy = sky(own['dim'])
-    _nat_ink(buf, dx, dy, 0.14 + 0.5 * np.clip(np.sin(own['tw'] + own['f'] * 2.5 * m['clock/treb']), 0, 1) * (0.4 + m['drive/treb']))
+    _ink(buf, dx, dy, 0.14 + 0.5 * np.clip(np.sin(own['tw'] + own['f'] * 2.5 * m['clock/treb']), 0, 1) * (0.4 + m['drive/treb']))
     S['trail'] = np.maximum(S['trail'], buf)
     _nat_show(img, S['trail'], hot, other)
 
@@ -673,14 +655,14 @@ def _nat_twister(img, m, dt, size, hot, other):
         return c + r * np.cos(a), N * 0.08 + N * 0.86 * h + 0.22 * r * np.sin(a), r
 
     x, y, _ = spot(h, a, off)
-    _nat_ink(S['trail'], x, y, np.where(np.sin(a) < 0, 1.0, 0.4).astype(np.float32))
+    _ink(S['trail'], x, y, np.where(np.sin(a) < 0, 1.0, 0.4).astype(np.float32))
     buf = S['trail'].copy()
     t = np.linspace(0, 1, 260, dtype=np.float32)[:, None]  # the spiral it is wound of
     ang = 22 * t + np.arange(4, dtype=np.float32)[None, :] * (math.pi / 2) + 3 * cm
     hx, hy, _ = spot(t, ang, 1.0)
-    _nat_ink(buf, hx, hy, np.where(np.sin(ang) < 0, 0.75, 0.2).astype(np.float32))
-    ph = _nat_phase(m)
+    _ink(buf, hx, hy, np.where(np.sin(ang) < 0, 0.75, 0.2).astype(np.float32))
+    ph = (_beats(m, 0.6, 'clock/mid') % 1.0)
     s = np.linspace(0, 2 * math.pi, 120, dtype=np.float32)
     rad = N * (0.05 + 0.34 * ph) * size
-    _nat_ink(buf, cx + rad * np.cos(s), N * 0.08 + 0.2 * rad * np.sin(s), np.float32(0.8 * (1 - ph) ** 1.5))
+    _ink(buf, cx + rad * np.cos(s), N * 0.08 + 0.2 * rad * np.sin(s), np.float32(0.8 * (1 - ph) ** 1.5))
     _nat_show(img, buf, hot, other, 0.05)

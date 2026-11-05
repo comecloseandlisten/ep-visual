@@ -32,7 +32,7 @@ export class Sync {
     if (this.n === null || n > this.n || n < this.n - 1) this.n = n;
     const on = tick && b.conf > 0.08;
     if (on) { this.pulse = 1; this.held.on = true; }
-    const beat = { ...b, count: n, phase: x - n, prev: (x - n - dt / b.T + 1) % 1, tick, on, pulse: this.pulse };
+    const beat = { ...b, count: n, phase: x - n, tick, on, pulse: this.pulse };
     let square = g?.square || null;
     if (square) { // the same for the squares, on their own clock
       const L = square.len, xs = square.x + a / b.T, ns = Math.floor(xs / L), at = xs - ns * L;

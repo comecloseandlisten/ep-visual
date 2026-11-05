@@ -119,7 +119,7 @@ def _op_shutter(img, m, dt, size, hot, other):
 def _op_quasi(img, m, dt, size, hot, other):
     # twelve plane waves, one a note, as strong as it sounds: every chord lays its own crystal
     own = S['own']
-    c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
+    c = _chroma()
     c = c / max(float(c.max()), 1e-3)
     e = own.get('c', c)
     own['c'] = e = e + (c - e) * min(1.0, dt / 0.35)
@@ -160,7 +160,7 @@ def _op_mandala(img, m, dt, size, hot, other):
     n, f = _op_step('ring', m, dt)
     s = (n - 1) % R
     if n != own['done']:
-        note = int(np.argmax([_v('chroma/%d' % k) for k in range(12)]))
+        note = int(np.argmax(_chroma()))
         own['p'][s], own['kind'][s], own['done'] = 4 + 2 * (note % 4) + 2 * s, note % 3, n
     g = (own['p'] > 0).astype(np.float32)
     g[(s + 1) % R] *= 1 - f  # the next ring goes as this one comes

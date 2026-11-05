@@ -19,11 +19,6 @@
 #   bio_feather    a feather whose barbs are the spectrum, lows by the quill, highs at the tip
 
 
-def _bio_beats(m, rate=0.7):
-    # beats so far, the fraction being the beat's phase; without a tempo the bass clock at a slow pace
-    return m['beat/count'] + m['beat/phase'] % 1.0 if _locked(m) else rate * m['clock/bass']
-
-
 def _bio_wrap(a):
     # an angle as -pi .. pi
     return (a + math.pi) % (2 * math.pi) - math.pi
@@ -46,11 +41,6 @@ def _bio_dots(buf, x, y, r, w=1.0):
     ox, oy = ox.ravel(), oy.ravel()
     near = np.clip(r[..., None] + 0.5 - np.hypot(ox, oy), 0, 1)
     _plot(buf, x[..., None] + ox, y[..., None] + oy, near * np.broadcast_to(w, x.shape)[..., None])
-
-
-def _bio_chroma():
-    c = np.array([_v('chroma/%d' % k) for k in range(12)], np.float32)
-    return c / max(float(c.max()), 1e-3)
 
 
 @gen('bio_worms', 'focused', 'mysterious', 'tense')
@@ -165,7 +155,7 @@ def _bio_tentacles(img, m, dt, size, hot, other):
     if 'aim' not in own:
         own['aim'] = (2 * math.pi * np.arange(k) / k).astype(np.float32)
     i = np.arange(k)
-    beats = _bio_beats(m, 0.8)
+    beats = _beats(m, 0.8)
     if _tick('aim', m):  # those about to go out find a new direction
         odd = int(beats) % 2
         pick = i % 2 == odd
@@ -368,7 +358,7 @@ def _bio_bacteria(img, m, dt, size, hot, other):
 @gen('bio_dna', 'mysterious', 'focused', 'euphoric')
 def _bio_dna(img, m, dt, size, hot, other):
     # turns with the mids; each rung is a note, lit as far as it sounds, and the key's own rung is the strongest
-    c = _bio_chroma()
+    c = _chroma()
     root = int(_v('key/root', -1))
     tilt = 0.42 + 0.14 * math.sin(0.2 * m['clock/mid'])
     co, si = math.cos(tilt), math.sin(tilt)
@@ -489,7 +479,7 @@ def _bio_heart(img, m, dt, size, hot, other):
     own, rng = S['own'], S['rng']
     if 'v' not in own:
         own['v'], own['s'] = _bio_heart_vessels(rng)
-    p = _bio_beats(m, 0.65) % 1.0
+    p = _beats(m, 0.65) % 1.0
     force = max(0.45, _recent('kicks', max(m['hit/kick'], 0.8 * m['hit/bass']), m, dt))
     lub = math.exp(-(min(p, 1 - p) / 0.07) ** 2)
     dub = 0.6 * math.exp(-((p - 0.32) / 0.07) ** 2)
@@ -555,7 +545,7 @@ def _bio_jelly(img, m, dt, size, hot, other):
     own = S['own']
     if 'y' not in own:
         own.update(y=0.6 * N, v=0.0, lv=m['level'])
-    p = (_bio_beats(m, 0.75) / 2) % 1.0
+    p = (_beats(m, 0.75) / 2) % 1.0
     close = min(1.0, p / 0.1) * (1 - p) ** 3
     own['lv'] += (m['level'] - own['lv']) * min(1.0, 2 * dt)
     own['v'] += dt * (close * N * 1.1 - 0.5 * N * 0.16 - 1.5 * own['v'] - 1.6 * (own['y'] - 0.62 * N))
@@ -721,9 +711,9 @@ def _bio_skin(img, m, dt, size, hot, other):
 @gen('bio_seeds', 'happy', 'euphoric', 'dreamy', whole=True)
 def _bio_seeds(img, m, dt, size, hot, other):
     # sixteen seeds to the beat out of the middle, each turned by the golden angle; every thirteenth makes a spiral, one to each note
-    c = _bio_chroma()
+    c = _chroma()
     root = int(_v('key/root', -1))
-    head = 16 * _bio_beats(m, 1.3)
+    head = 16 * _beats(m, 1.3)
     k = 880
     i = math.floor(head) - np.arange(k)
     age = (head - i).astype(np.float32)
