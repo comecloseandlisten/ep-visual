@@ -18,6 +18,7 @@
 
 <img src="docs/keys.svg" alt="the pad grid: pads a1–a12 with their keys 1 2 3, q w e, a s d, z x c" width="100%">
 
+**the dock** &nbsp;at the top right opens the cards over the picture: **pads**, **input**, **canvas** and the rest<br>
 **drop a sound on a pad** &nbsp;and hit it: `1 2 3 · q w e · a s d · z x c`<br>
 **line in** &nbsp;plug in a sampler, a mixer, a mic<br>
 **spotify** &nbsp;let it hear whatever the computer plays
@@ -74,7 +75,7 @@ all of it original silhouettes: no real people, no logos, no borrowed characters
 python -m http.server 8000
 ```
 
-open <http://localhost:8000> &nbsp;·&nbsp; `ctrl+s` saves a png &nbsp;·&nbsp; **rec** saves a clip
+open <http://localhost:8000> &nbsp;·&nbsp; `f` full screen &nbsp;·&nbsp; `h` cards away and back &nbsp;·&nbsp; `ctrl+s` saves a png &nbsp;·&nbsp; **rec** saves a clip
 
 <br>
 

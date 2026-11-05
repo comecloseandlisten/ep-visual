@@ -11,6 +11,7 @@ import { LOOPBACK, NowPlaying } from './nowplaying.js';
 import { Touch } from './touch.js';
 import { Knobs } from './knobs.js';
 import { Recorder } from './record.js';
+import { Overlay } from './overlay.js';
 import { Sync } from './sync.js';
 
 const $ = (sel) => document.querySelector(sel);
@@ -1165,6 +1166,10 @@ window.addEventListener('keydown', (e) => {
   } else if (e.code === 'Space' || e.code === 'Escape') {
     e.preventDefault();
     stopAll();
+  } else if (e.code === 'KeyF' && !e.repeat) {
+    overlay.toggleFull();
+  } else if (e.code === 'KeyH' && !e.repeat) {
+    overlay.toggleCards();
   }
 });
 window.addEventListener('pointerdown', resume);
@@ -1222,6 +1227,8 @@ const touch = new Touch({
 });
 // clips of the canvas as shown, with what the page hears
 const recorder = new Recorder({ $, actx, bus, canvas: big, status });
+// the dock and the cards over the picture, the fill and full screen buttons
+const overlay = new Overlay({ $, status });
 const listeningToSystem = () => lineIn && (lineIn.label.startsWith('system audio') || LOOPBACK.test(lineIn.label));
 $('#sysBtn').addEventListener('click', () => (listeningToSystem() ? stopLineIn() : nowPlaying.listen()));
 

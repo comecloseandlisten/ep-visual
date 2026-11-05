@@ -8,19 +8,22 @@
 </head>
 <body>
   <main class="app">
-    <div class="stage-wrap">
-      <canvas id="stage" width="1000" height="1000"></canvas>
-      <div class="stage-foot"><span>1000 × 1000</span><span>drop audio anywhere</span><span>ctrl+s · save png</span></div>
-    </div>
+    <canvas id="stage" width="1000" height="1000"></canvas>
+
+    <header class="bar">
+      <div class="brand">
+        <div class="logo">ep<i>·</i>visual</div>
+        <div class="status"><span class="dot"></span><span id="status">starting</span></div>
+      </div>
+      <nav class="dock">
+        <button class="key" data-card="mood">mood</button><button class="key" data-card="signal">signal</button><button class="key" data-card="pads">pads</button><button class="key" data-card="input">input</button><button class="key" data-card="canvas">canvas</button>
+        <i></i>
+        <button id="fillBtn" class="key on" title="on: the picture fills the window, its top and bottom cut · off: the whole square, bars at the sides">fill</button><button id="fullBtn" class="key" title="full screen · f">full</button>
+      </nav>
+    </header>
 
     <aside class="panel">
-      <header class="brand">
-        <div class="logo">ep<i>·</i>visual</div>
-        <div class="tag">mood → pixels</div>
-      </header>
-      <div class="status"><span class="dot"></span><span id="status">starting</span></div>
-
-      <section>
+      <section data-card="mood" hidden>
         <h2><b>01</b>mood</h2>
         <div class="mood">
           <div id="moodName">silence</div>
@@ -42,13 +45,13 @@
         </div>
       </section>
 
-      <section>
+      <section data-card="signal" hidden>
         <h2><b>02</b>signal</h2>
         <div id="groove" class="story mono"></div>
         <canvas id="meters" width="300" height="300"></canvas>
       </section>
 
-      <section>
+      <section data-card="pads" hidden>
         <h2><b>03</b>pads
           <span class="groups">
             <button class="grp on" data-g="A">a</button><button class="grp" data-g="B">b</button><button class="grp" data-g="C">c</button><button class="grp" data-g="D">d</button>
@@ -59,7 +62,7 @@
         <p class="hint">keys 1 2 3 · q w e · a s d · z x c or numpad. space stops. drop a file on a pad to swap it.</p>
       </section>
 
-      <section>
+      <section data-card="input" hidden>
         <h2><b>04</b>input</h2>
         <div class="row">
           <button id="lineBtn" class="key wide">line in</button><button id="sysBtn" class="key" title="listen to what the computer plays: a stereo mix / loopback input, or share the system audio">spotify</button>
@@ -72,7 +75,7 @@
         <p class="hint" id="jamInfo"></p>
       </section>
 
-      <section>
+      <section data-card="canvas" hidden>
         <h2><b>05</b>canvas</h2>
         <div class="row"><span class="lab">art</span><select id="artSel" aria-label="art"></select></div>
         <div class="row">
@@ -88,6 +91,7 @@
           <button id="seedBtn" class="key">new seed</button><button id="clearBtn" class="key">clear</button><button id="saveBtn" class="key accent">save png</button><button id="recBtn" class="key" title="record the canvas with its sound into the library's visuals folder">rec</button>
         </div>
         <p class="hint" id="tdInfo" hidden></p>
+        <p class="hint">f · full screen. h · cards away and back. ctrl+s · save png. drop audio anywhere.</p>
       </section>
     </aside>
   </main>

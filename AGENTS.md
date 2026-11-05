@@ -6,6 +6,7 @@ The README is for people. This file is the technical map.
 
 - `index.html`, `style.css`: the page. Plain ES modules, no build, no dependencies. Serve the folder over HTTP.
 - `js/main.js`: audio graph, pads, line in, the frame loop, transitions, UI.
+- `js/overlay.js`: the dock and the cards over the picture, the fill and full screen buttons.
 - `js/analysis.js`: the `Listener` (bands, attacks, BPM by comb ACF, key) and `Mood` (valence × arousal → mood).
 - `js/groove.js`: the part of the track (groove, peak, pit, breakdown, build-up, drop), the visual budget it
   allows, the rhythm template (lock, sync, swing, fills) and the phrase ("squares", 2–16 bars).
